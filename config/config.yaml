@@ -44,3 +44,11 @@ vector_db:
   provider: qdrant_local     # qdrant_local | qdrant_server
   path: ./data/qdrant
   collection: fact_cards
+
+# ============ 评测（Phase 8 Eval-Harness 回放式评测用）============
+eval:
+  output_dir: ./data/eval        # run.py 写 eval_report.{json,md} 的目录（data/ 已 gitignore）
+  detection_threshold: 1.0       # 编造拦截率门禁：对抗 6 场景须全拦（固定语料回归基线）
+  precision_threshold: 1.0       # 来源/grounding 准确率门禁：真实语料每条出处都真采集到
+  structure_threshold: 1.0       # 结构合规率门禁
+  require_trace_consistent: true # trace 计数链一致性门禁（防御性回归基线）

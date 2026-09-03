@@ -90,6 +90,14 @@ class VectorDBConfig(BaseModel):
     collection: str = "fact_cards"
 
 
+class EvalConfig(BaseModel):
+    output_dir: str = "./data/eval"
+    detection_threshold: float = 1.0     # 编造拦截率门禁（对抗注入全拦）
+    precision_threshold: float = 1.0     # 来源/grounding 准确率门禁（真实语料 0 编造）
+    structure_threshold: float = 1.0     # 结构合规率门禁
+    require_trace_consistent: bool = True  # trace 计数链一致性门禁
+
+
 class Settings(BaseModel):
     app: AppConfig = Field(default_factory=AppConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
@@ -98,6 +106,7 @@ class Settings(BaseModel):
     alerts: AlertConfig = Field(default_factory=AlertConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     vector_db: VectorDBConfig = Field(default_factory=VectorDBConfig)
+    eval: EvalConfig = Field(default_factory=EvalConfig)
 
     @classmethod
     def from_yaml(cls, path: str | Path | None = None) -> "Settings":
