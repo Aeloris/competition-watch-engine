@@ -90,9 +90,16 @@ class Event(BaseModel):
 
 
 class Snapshot(BaseModel):
-    """记忆：某竞品某周期结束的留档 = 该期 Event 指纹集合。diff 引擎（Phase 3）的比对对象。"""
+    """记忆：某竞品某周期结束的留档 = 该期 Event 指纹集合。diff 引擎（Phase 3）的比对对象。
+
+    Phase 3 扩展：
+    - `event_digests`（fp → 事件内容摘要）——只看 fp 集合只能判 add/remove/skip，判不了 change；
+      同 fp 两期都在但 digest 变了 = 变更事件。Phase 1 的旧快照无此字段（默认 {}，向后兼容）。
+    - `event_fps` 与 `event_digests` 的键应一一对应（`memory/diff.py::build_snapshot` 保证）。
+    """
 
     period: str                          # "YYYY-Www"（ISO 周），如 "2026-W34"
     competitor_id: str
     event_fps: list[str] = Field(default_factory=list)
+    event_digests: dict[str, str] = Field(default_factory=dict)  # fp → 内容摘要（diff change 判定）
     created_at: datetime = Field(default_factory=datetime.now)
