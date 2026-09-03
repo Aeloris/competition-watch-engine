@@ -1,13 +1,18 @@
-# 服务层：任务 / 定时 / 告警 / 健壮性（Phase 7）
+# 服务层：任务 / 定时 / 告警 / 健壮性 + 人工放行闭环 / 发布视图 / 简单面板（Phase 7+8）
 
 > Phase 7 交付（README2 §5.9 定时与告警 + §5.10 服务层健壮性与观测 / §7.4 row 7）：
 > 把 Phase 4–6 已跑通的单条流水线（`run_cycle`），包成**一次"本期巡检" = 一个 Task** 的服务层
 > —— FastAPI **任务管理**（POST /tasks → 同步执行 + 返回终态）、**APScheduler 定时**（每周一 09:00
 > 报上周）、**告警 webhook 适配**（Mock 台账离线可查，Webhook 壳诚实占位）、**run 级失败隔离**
 > （一竞品挂不影响其它）、**trace 计数链收口**（采集 N → 去重 M → diff K → 门卫拦 X 在服务层可查）。
-> 验收（README2 §7.4 row 7）：接口全套 + 定时/告警可演示 + 故障演练。**144 测试全绿**
-> （123 基线 + 21 条 service：`tests/test_service_runtime.py` 13 + `tests/test_service_api.py` 8）。
-> 编排与门卫内部口径见 [`docs/orchestrator.md`](orchestrator.md) / [`docs/reviewer.md`](reviewer.md)。
+> Phase 8 补（README2 §5.11 / §7.4 row 8）：把 P7 停在"拦到等人工"的先审后发推到底——
+> **人工放行闭环**（`service/publish.py`：release/dismiss 销案、note 只备注）+ **发布视图**
+> （`published_view` 把周报 draft 按 resolution 过滤成 published/held/dismissed）+ **简单面板**
+> （`app/routers/panel.py` 零构建 HTML：放行/驳回/备注按钮 + 发布视图 + 告警可视化）。
+> 验收：接口全套 + 定时/告警可演示 + 故障演练（P7）+ 人工闭环/发布过滤/面板可演示 + 评测门禁（P8）。
+> **165 测试全绿**（144 基线 + eval 15 + panel API 6：`tests/test_panel_api.py`）。
+> 编排与门卫内部口径见 [`docs/orchestrator.md`](orchestrator.md) / [`docs/reviewer.md`](reviewer.md)，
+> 评测口径见 [`docs/eval.md`](eval.md)。
 
 ---
 
@@ -104,7 +109,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 > 会真触发到**周二**。`test_weekly_cron_fires_monday_0900` 从 config 读值 + 走真注册路径断言下个触发点
 > = 每周一 09:00，防静默漂移。
 
-## 6. HTTP 接口（app/routers + main 0.7.0）
+## 6. HTTP 接口（app/routers + main 0.8.0，Phase 7+8）
 
 | 方法/路径 | 作用 | 返回 |
 |---|---|---|
@@ -112,13 +117,35 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 | `GET /tasks` | Task 列表（created_at 倒序） | count + tasks[] |
 | `GET /tasks/{id}` | Task 详情（404 = 不存在） | TaskMeta |
 | `GET /tasks/{id}/report` | 合规周报：各 done run 从 pipeline json 合并全量 draft（headline/sections/items/sources + threat_radar + trace） | report[] |
-| `GET /inbox` | 人工收件箱：**只有 verdict=human 的 run** 的 human_inbox 条目（status:"pending"，Phase 8 面板消费） | count + entries[] |
+| `GET /tasks/{id}/published` | **发布视图（Phase 8）**：把周报 draft 按人工 resolution 过滤成 published / held / dismissed（先审后发闭环的可复核快照，逻辑在 service/publish） | published_total/held_total/dismissed_total + runs[] |
+| `GET /inbox` | 人工收件箱：**只有 verdict=human 的 run** 的 human_inbox 条目；`?status=pending\|all\|resolved`（缺省 pending = 只看未处理）；每条带稳定 `entry_id = {run_id}#{seq}` | count + status_filter + entries[] |
+| `POST /inbox/resolve` | **人工定案（Phase 8）**：{entry_id, action: release\|dismiss\|note, by, note?} → release/dismiss = 销案终态、note = 只备注不销案；404 未知条目、409 已定案不可覆盖、422 格式/字段非法 | resolved + entry（含 status + resolution） |
 | `GET /alerts` | 告警台账倒序（最新在前） | count + alerts[] |
 | `POST /alerts/hook` | 手动投递演练（body=event_type/summary/…；非法 event_type 422） | accepted 回执 |
+| `GET /panel` | **简单面板总览（Phase 8）**：人工收件箱待办（未销案条目 + 跳转）+ 最近任务 + 最近告警（HTML） | text/html（空态 200） |
+| `GET /panel/task/{id}` | **单任务面板（Phase 8）**：每 run 收件箱条目带 放行/驳回/备注 按钮（fetch POST /inbox/resolve）+ 发布视图；404 缺任务 | text/html |
 
 `main.py` 挂 `app.state.service = build_service_context()`（settings + TaskStore + Notifier + Runner
 捏成一个依赖）；routers 经 `get_service_ctx` 读。`schedule.enabled=true` 时 lifespan 启动 scheduler。
-版本 `0.7.0`。健康检查 `/health` 保持 Phase 0 契约不变。
+版本 `0.8.0`。健康检查 `/health` 保持 Phase 0 契约不变。
+
+### Phase 8 补：resolution 语义 / 发布视图 / 简单面板（service/publish.py）
+
+- **resolution 语义**：收件箱条目 `status` 由 resolution 推导——无 → pending；`note`（只备注不销案）→ 仍
+  pending；`release` / `dismiss` → resolved（**终态不可覆盖**，改判同一条目 409，不许覆盖审计决定）。
+  resolution 审计字段 `{action, by, note, resolved_at}` 原样落回 `run.human_inbox[seq]`（`add_run` 幂等覆盖），
+  → 面板/发布视图读 TaskStore 就能看到"谁、何时、为何定案"。
+- **发布视图 `published_view(task_store, settings, task_id)`**：每 done run 从 pipeline json 读 draft，把每条
+  item 按 item_index 映射到 human_inbox 条目的 resolution：
+  - 无任何指向（**自审通过**）→ 直接进 published（`human_released=false`）；
+  - 有 release → 进 published（`human_released=true` + resolution 原文）；
+  - 有未定案/只有 note → 挂 held（等人工）；
+  - 有 dismiss → 从发布剔除、进 dismissed 审计区。
+  真实 PASS run = 全自动发布（held/dismissed 空）；真实 human run = 门卫拦到等人工 → published_view 把
+  "拦了什么、放行后发什么"变成一屏可复核的决策快照。
+- **简单面板**（零构建，不引前端框架/打包器）：服务端直出 HTML + 原生 JS，**只做"把 service 层 JSON 渲染成
+  HTML + 点按钮调回同款 JSON API"**，路由薄、逻辑全在 `service/publish` + TaskStore。测试只断言 200 + 关键
+  文本标记（待办/entry_id/发布视图/放行按钮），不测浏览器行为。
 
 ## 7. 健壮性：run 级失败隔离 + 故障演练
 
@@ -148,39 +175,52 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
    环节 —— 配了 url 却不发 = 假安全感。宁可构造期报错、投递期 501，也不假装已推送给老板。
 5. **为什么 run 级隔离而不是"整单原子"**：竞品独立巡检，一个源挂了整个 Task failed 会掩盖
    健康竞品的高威胁信号（那正是要告警的东西）。partial + 逐 run 状态是最小诚实呈现。
+6. **为什么 release/dismiss 终态不可覆盖、note 只备注不销案**：人工定案是**审计事件**，改判 = 覆盖审计记录
+   （409）；备注是"还想再想想"的中间态，不该把"我还没定"悄悄算成"已放行"——发布视图宁挂 held 也不误发。
 
-## 9. 局限与边界（诚实口径，别把 P7 说成生产级平台）
+## 9. 局限与边界（诚实口径，别把 P7/P8 说成生产级平台）
 
 - **Webhook 仍是占位壳**：企微/飞书/邮件推送未接真 HTTP（需要真实 endpoint/密钥，属接入期）；
-  本期保证的是**适配层 + fail-fast + 不假装已发**。Mock 台账是离线的诚实默认。
+  保证的是**适配层 + fail-fast + 不假装已发**。Mock 台账是离线的诚实默认。
 - **定时只在进程活着时生效**：单进程长跑服务定位；无持久任务队列/错过补偿（README2 未承诺）。
 - **同步执行**：POST /tasks 在请求内跑完多竞品才返回（演示直观、curl 就能看终态）；
-  超长任务 / 并发限流未做（Phase 8 面板/任务队列可接）。
-- **收件箱 resolution 未做**：inbox 只读"pending 待确认"；人工确认放行/关闭是 Phase 8 面板职责
-  （本期先审后发 = 拦截到"等人工"，人工动作是下一步）。
-- **README2 里的目标指标（如告警延迟、覆盖率）仍是设计目标占位**；本期给的实测口径只有：
-  接口/定时/告警/隔离/故障演练全部有测试锁死（21 条），trace/radar 数字为实测（非编造）。
+  超长任务 / 并发限流仍未做（任务队列可接）。
+- **"人工放行"是审计动作，不是真订阅分发**：release 让条目进 published_view（HTTP 查询态的可复核快照）；
+  周报**对外真推送仍无渠道**（那是接入期活，Reporter/publisher 占位）。面板是"能点按钮、能看到决策"的
+  操作台，别指望它好看——这是诚实口径不是产品宣言。
+- **评审评测是固定语料回归基线**：Eval-Harness 的数字（gold 7/7、对抗 6/6 等）只证明"造的固定场景里流水线
+  稳定做到设计该做的"，**不是真实世界表现**（详见 docs/eval.md §6）；P7 的 trace/radar 数字为实测（非编造）。
+- **README2 里的目标指标（如告警延迟、覆盖率）仍是设计目标占位**；本期实测口径只有上面测试锁死的部分
+  （service 21 + panel 6 + eval 15 条）。
 
 ## 10. 运行与验证
 
 ```bash
 uv sync
-uv run pytest                       # 全绿（Phase 7 = 144；service 21 条）
-uv run pytest tests/test_service_runtime.py tests/test_service_api.py -v
-uv run uvicorn app.main:app --port 8000   # 服务化 HTTP
+uv run pytest                       # 全绿（Phase 8 = 165：基线 144 + eval 15 + panel 6）
+uv run pytest tests/test_service_runtime.py tests/test_service_api.py tests/test_panel_api.py -v
+uv run uvicorn app.main:app --port 8000   # 服务化 HTTP（0.8.0，含 /panel）
 # 跑一次"本期巡检"（单竞品调试 / 缺省 = 全部竞品 + 最近已结束 ISO 周）：
 curl -s -X POST localhost:8000/tasks -H 'Content-Type: application/json' -d '{"period":"2026-W35","competitor_id":"crm_alpha"}'
 curl -s localhost:8000/tasks                 # 任务列表（含 trace 计数链 + 门卫判定）
 curl -s localhost:8000/tasks/<task_id>/report # 合规周报全量 draft
-curl -s localhost:8000/inbox                 # 人工收件箱（PASS 时为空）
+curl -s localhost:8000/tasks/<task_id>/published   # 发布视图：published/held/dismissed（PASS run = 全发布）
+curl -s localhost:8000/inbox                 # 人工收件箱（PASS 时为空；?status=all|resolved 可切）
 curl -s localhost:8000/alerts                # 告警台账（真实 W35 有 high → high_threat）
 curl -s -X POST localhost:8000/alerts/hook -H 'Content-Type: application/json' \
      -d '{"event_type":"high_threat","summary":"手动投递演练"}'
+curl -s -X POST localhost:8000/inbox/resolve -H 'Content-Type: application/json' \
+     -d '{"entry_id":"<run_id>#<seq>","action":"release","by":"演示员","note":"人工核对无误"}'  # 人工放行
+# 简单面板（浏览器打开 / 或 curl 看 HTML）：
+curl -s localhost:8000/panel                  # 总览：待办收件箱 + 最近任务 + 最近告警
+curl -s localhost:8000/panel/task/<task_id>   # 单任务：放行/驳回/备注按钮 + 发布视图
 ```
 
 实测口径（fresh-store W35，测试锁死，非编造）：crm **5→3→3**、bi **5→4→4**；雷达 crm {1,1,1} /
-bi {1,1,2}；全 PASS、收件箱空、gate_trace=1；每竞品触发 1 条 high_threat 告警。
-演练 A（run 挂）→ Task partial + run_failed 告警；演练 B（注入假事件）→ human + inbox + human_inbox 告警。
+bi {1,1,2}；全 PASS、收件箱空、gate_trace=1；每竞品触发 1 条 high_threat 告警；发布视图 = 全自动发布
+（published 3+4、held/dismissed 0）。演练 A（run 挂）→ Task partial + run_failed 告警；演练 B（注入假事件）→
+human + inbox + human_inbox 告警，`POST /inbox/resolve` release → 该条目从 held 进 published（human_released=true）、
+dismiss → 进 dismissed 审计区（`tests/test_panel_api.py` 锁死）。
 数据全隔离在 `data_dir`：测试用 `build_service_context(data_dir=tmp)`，两个 ctx 互不写穿。
 
 ---
@@ -188,3 +228,6 @@ bi {1,1,2}；全 PASS、收件箱空、gate_trace=1；每竞品触发 1 条 high
 _更新日志_：2026-09-04 建（Phase 7 交付：service/{schemas,store,runner,notifier,scheduler,context} +
 config schedule/alerts + app/routers{tasks,inbox,alerts} + main 0.7.0；run 级失败隔离、trace 计数链收口、
 Mock/Webhook 告警、每周一 09:00 cron（名字 mon 免 APScheduler 数值歧义）；144 测试）。
+2026-09-04 更新（Phase 8：service/publish.py（resolution 语义 + published_view 发布视图过滤）+
+app/routers inbox resolve + tasks/{id}/published + panel；main 0.7.0→0.8.0；HTTP 表加 Phase 8 端点 +
+§6 闭环小节；§8 决策补第 6 条；§9 局限删"resolution 未做"、补 P8 诚实边界；144→165 测试（eval 15 + panel 6））。

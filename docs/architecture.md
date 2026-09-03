@@ -11,11 +11,17 @@
 > （POST /tasks 同步执行返回终态）+ APScheduler 定时（每周一 09:00）+ 告警 webhook 适配（Mock 台账 /
 > Webhook 壳 fail-fast）+ **run 级失败隔离**（一竞品挂不影响其它）+ **trace 计数链收口**
 > （采集 N→去重 M→diff K→门卫拦 X 在服务层可查），全在 app/routers 暴露 HTTP。
+> Phase 8 = 把 P7 的先审后发推到「能闭环」并配上评测：`service/publish.py` 给人工收件箱加
+> **resolution 语义**（release/dismiss = 销案终态、note = 只备注不销案，审计落 run.human_inbox）；
+> **发布视图** `published_view` 把周报 draft 按 resolution 过滤成 published / held / dismissed；
+> **简单面板** `app/routers/panel.py`（零构建 HTML + 原生 JS，调同款 JSON API）；**Eval-Harness**
+> `eval/` 给流水线加「固定语料回放评测 + 自动门禁」（回归一致性 / gold 真值集 7/7 / 对抗 6 场景全拦）。
 > 本文先落两张与设计稿一致的 Mermaid（见 `README2.md` §4.1/§4.2），再给"今天真实能跑的部分 / 未来挂载点"对照，
 > 避免 README 只画将来、落地只有壳。数据模型细节见 [`docs/schema.md`](schema.md)，采集层细节见 [`docs/collectors.md`](collectors.md)，
 > 去重与跨期 diff 细节见 [`docs/memory.md`](memory.md)，编排状态机细节见 [`docs/orchestrator.md`](orchestrator.md)，
 > Analyst 分级 + Writer 周报细节见 [`docs/analyst_writer.md`](analyst_writer.md)，Reviewer 审稿门卫细节见 [`docs/reviewer.md`](reviewer.md)，
-> 服务层（任务/定时/告警/健壮性）细节见 [`docs/service.md`](service.md)。
+> 服务层（任务/定时/告警/健壮性）细节见 [`docs/service.md`](service.md)，人工放行闭环 / 发布视图 / 简单面板
+> 见同一文档 Phase 8 段落，Eval-Harness 回放评测细节见 [`docs/eval.md`](eval.md)。
 
 ---
 
@@ -89,8 +95,10 @@ flowchart LR
 
 | 层 | 设计稿节点 | 状态 | 落地位置 |
 |---|---|---|---|
-| 服务层 | FastAPI | ✅ `/health` + `/` + 业务路由，version 0.7.0 | `app/main.py` |
+| 服务层 | FastAPI | ✅ `/health` + `/` + 业务路由，version 0.8.0 | `app/main.py` |
 | 服务层 | 任务/报告/告警 API | ✅ Phase 7 全套：POST /tasks（建+同步执行返回终态）/ GET /tasks / {id} / {id}/report（合并 pipeline draft）/ GET /inbox（人工收件箱）/ GET /alerts / POST /alerts/hook | `app/routers/{tasks,inbox,alerts,deps}.py` + `service/` |
+| 服务层 | 人工放行闭环 / 发布视图 | ✅ Phase 8：POST /inbox/resolve（release/dismiss=销案终态、note=只备注不销案，审计 by/note/resolved_at 落 run.human_inbox，entry_id=`{run_id}#{seq}`）+ GET /tasks/{id}/published（draft → published/held/dismissed 过滤；PASS 全自动发布） | `service/publish.py` + `app/routers/{inbox,tasks}.py` |
+| 服务层 | 简单面板（人工放行 + 告警可视化） | ✅ Phase 8 零构建 HTML：/panel 总览 + /panel/task/{id} 单任务（收件箱 放行/驳回/备注 按钮 + 发布视图，原生 JS 调同款 JSON API） | `app/routers/panel.py` |
 | 服务层 | 任务执行 = Task（本期×多竞品） | ✅ Phase 7 `ServiceRunner.execute_task`：逐 run 执行、**run 级失败隔离**、终态 completed/partial/failed + 聚合 summary | `service/{runner,store,schemas}.py` |
 | 服务层 | trace 计数链收口 | ✅ Phase 7：RunMeta.trace + TaskMeta.summary.chains（采集 N→去重 M→diff K + verdict + gate_problems + inbox） | `service/schemas.py` / `service/runner.py` |
 | 服务层 | 告警 Notifier | ✅ Phase 7：high_threat / human_inbox / run_failed → Mock 落台账（默认离线）；Webhook 壳空 url fail-fast、deliver 抛 NotImplemented（真 HTTP 推送接入期） | `service/notifier.py` + `config alerts.webhook_url` |
@@ -109,7 +117,8 @@ flowchart LR
 | 核心业务层 | Writer 模板化周报 | ✅ Phase 5 WeeklyReport schema 自校验（headline/雷达/kind/sources；只组装不发挥） | `writer/{report,service}.py` + `docs/analyst_writer.md` |
 | 核心业务层 | Reviewer 质量门卫 | ✅ Phase 6 审稿门卫：grounding 闭环自证（URL/fp/命中词）+ 显式反义极性矛盾 + 与上期重复；typed problems，结构性缺口 REWRITE 限次、信任类问题直转人工收件箱（gate_trace 审计迹） | `reviewer/{gate,problems}.py` + `orchestration/nodes.py`（reviewer_node 路由）+ `docs/reviewer.md` |
 | 核心业务层 | Alert（告警） | ✅ Phase 7 由 `service/notifier.py` 承担（高威胁即时告警 + 转人工告警 + run 失败告警 → Mock 台账 / Webhook 壳）；Reporter 类里原"告警"职责已实现在服务层 | `service/notifier.py` + `docs/service.md` |
-| 核心业务层 | Reporter（周报对外发布/推送）/ Eval | 🟡 周报对外"推送"仍无真实渠道（现在经 GET /tasks/{id}/report 查询态）；Reporter 类 + Eval 留 P8 | `reporter/publisher.py`（Reporter 占位类）；`eval/harness.py`（占位类） |
+| 核心业务层 | Reporter（周报对外发布/推送） | 🟡 周报对外"推送"仍无真实渠道——发布闭环止于 published_view（HTTP 查询态的可复核快照）；Reporter 类 + 真渠道留接入期 | `service/publish.py`（published_view）；`reporter/publisher.py`（Reporter 占位类） |
+| 核心业务层 | Eval 回放评测 | ✅ Phase 8 Eval-Harness：三面六指标（回归一致性 + gold 真值 7/7 + 对抗注入 6 场景全拦 + 来源/grounding + 结构合规 + trace 计数链）+ 门禁（config eval 阈值，fail 退出码 1）；真实语料 0 误拦 | `eval/{dataset,adversarial,metrics,harness,run}.py` + `config config.yaml eval:` + `docs/eval.md` |
 | 核心业务层 | LangGraph 状态机 | ✅ Phase 4–6（analyst/writer P5、reviewer P6 做实，图一条边不改） | `orchestration/{state,planner,nodes,graph,pipeline}.py` + `docs/orchestrator.md` |
 
 > 图里 P1–P8 的灰块是**目标态**；上表第二列标了它们此刻对应哪个 Phase。交付口径：
@@ -141,9 +150,21 @@ flowchart LR
 > （POST /tasks / GET /tasks / {id} / {id}/report / GET /inbox / GET /alerts / POST /alerts/hook）。
 > 两条故障演练注入测试锁死（run 挂 → partial + run_failed 告警；假 writer → human + 收件箱 + human_inbox 告警）。
 > 全 mock 下 144 测试全绿（service 21 条：runtime 13 + api 8）。
-> ——**不宣称已连真实网络 / 已产出 LLM 情报 / 已能语义判同 / 已真推告警**：真实 adapter 与跨竞品 fan-out 在接入期；
-> Webhook 是占位壳（真 HTTP 推送接企微/飞书/邮件要真实 endpoint/key，属接入期）；收件箱人工确认放行/关闭是
-> Phase 8 面板职责（本期先审后发 = 拦到"等人工"，人工动作是下一步）；LLM 语义补分级（异词同威胁）与 Reviewer 的
+> Phase 8 交付 = **Eval-Harness 回放评测 + 人工放行闭环 / 发布视图 / 简单面板**：`eval/` 五模块
+> （dataset 存 gold 真值 + 去重重复组 / adversarial 六对抗场景 / metrics 六指标纯函数 / harness 三面回放 /
+> run 门禁 CLI）+ config `eval:` 门禁块。三面：**回归一致性**（真实 W34/W35 冻结语料回放，trace 5→3→3 /
+> 5→4→4、radar、verdict 全 PASS 等规范数字锁死，真实语料 0 误拦）、**gold 真值集**（手标 7 事件 →
+> 事件一致率 7/7 + 去重组全并 + 每周报来源都真采集到）、**对抗注入**（unsourced_url / ungrounded_fp /
+> ungrounded_claim / contradiction 各单码纯、mixed 双码、duplicate 门卫级 → 6 场景全拦、编造拦截率 1.0）。
+> `service/publish.py`：收件箱条目带稳定 entry_id=`{run_id}#{seq}`，resolution 语义（release/dismiss = 销案
+> 终态不可覆盖、note = 只备注不销案；by/note/resolved_at 审计落 run.human_inbox）；`published_view` 把 draft 按
+> resolution 过滤成 published / held / dismissed（PASS 全自动发布、未放行/带 note 挂 held、dismissed 进审计剔除区）。
+> `app/routers/panel.py` 零构建 HTML 面板（收件箱 放行/驳回/备注 按钮 + 发布视图 + 告警可视化，原生 JS 调同款
+> JSON API）。main 0.8.0；全 mock 下 **165 测试全绿**（144 基线 + eval 15 + panel API 6）。
+> ——**不宣称已连真实网络 / 已产出 LLM 情报 / 已能语义判同 / 已真推告警 / eval 数字=真实世界表现**：真实 adapter 与
+> 跨竞品 fan-out 在接入期；Webhook 是占位壳（真 HTTP 推送接企微/飞书/邮件要真实 endpoint/key，属接入期）；
+> Eval-Harness 是**固定语料回归基线**（gold 7 事件 + 6 对抗场景是"编得动的口径"，不是真实世界命中率；
+> duplicate 为门卫级而非图级，见 docs/eval.md §4）；LLM 语义补分级（异词同威胁）与 Reviewer 的
 > "读原文语义 grounding"都在规则/自证之后加一层（provider-gated，本期未接）；语义近并（embedding/Qdrant）后置占位
 > （近原文去重仍走确定性规则，见 docs/memory.md 边界表）。
 
@@ -151,7 +172,7 @@ flowchart LR
 
 ```
 competition-watch-engine/
-├─ app/main.py            # FastAPI 入口：GET / /health + 业务路由（version 0.7.0）
+├─ app/main.py            # FastAPI 入口：GET / /health + 业务路由（version 0.8.0，Phase 8 含面板）
 ├─ config/config.yaml     # 业务参数（全参数占位）
 ├─ config/settings.py     # pydantic 强类型 + fail-fast（dashscope 无 key 即报错）
 ├─ llm/                   # Provider 抽象：base / mock_provider / dashscope_provider(壳) / get_provider
@@ -174,12 +195,17 @@ competition-watch-engine/
 ├─ analyst/                # Phase 5：rubric(规则阶梯: 先命中先定级 + 理由链) / classifier(Analyst.grade → write_items)
 ├─ writer/                 # Phase 5：report(WeeklyReport/ReportItem 模型自校验) / service(Writer.build 只组装不发挥)
 ├─ reviewer/               # Phase 6：gate(Reviewer.review → typed problems: grounding/矛盾/合规) / problems(代码+路由表)
-├─ service/                # Phase 7：schemas(Task/Run/Alert 契约) / store(TaskStore 文件即状态+告警台账)
+├─ service/                # Phase 7+8：schemas(Task/Run/Alert 契约) / store(TaskStore 文件即状态+告警台账)
 │  │                       #          / runner(execute_task: run 级隔离+计数链收口+告警) / notifier(Mock/Webhook)
-│  │                       #          / scheduler(weekly_report cron 注册) / context(ServiceContext 依赖)
+│  │                       #          / scheduler(weekly_report cron 注册) / publish(Phase 8: resolution
+│  │                       #          语义 + published_view 发布视图过滤) / context(ServiceContext 依赖)
 │  └─ __init__.py          # 导出 build_service_context/ServiceRunner/run_now/MockNotifier/WebhookNotifier 等
-├─ app/routers/            # Phase 7：deps(get_service_ctx) / tasks(POST/GET + /{id}/report) / inbox / alerts(hook)
-├─ reporter/ eval/         # 占位（Reporter 类里"告警"职责已被 service/notifier 承担；对外推送 + Eval 留 P8）
+├─ app/routers/            # Phase 7+8：deps(get_service_ctx) / tasks(+/{id}/published) / inbox(+resolve) / alerts / panel
+├─ eval/                   # Phase 8：dataset(gold 真值/去重重复组) / adversarial(6 对抗场景+毒化 writer)
+│  │                       #          / metrics(六指标纯函数) / harness(EvalHarness 三面回放+render_markdown)
+│  └─ run.py               # check_gates 门禁 + python -m eval.run CLI（写 data/eval/eval_report.{json,md}，fail=1）
+├─ reporter/publisher.py   # 占位类（Reporter 告警职责已归 service/notifier；周报对外真推送留接入期）
+│                          # ——发布闭环止于 service/publish.published_view（HTTP 查询态可复核快照）
 ├─ docs/architecture.md    # 本文
 ├─ docs/schema.md          # 数据模型与持久化（Phase 1）
 ├─ docs/collectors.md      # 采集层设计：并发/隔离/计数说明（Phase 2）
@@ -187,8 +213,9 @@ competition-watch-engine/
 ├─ docs/orchestrator.md    # 编排状态机（Phase 4）
 ├─ docs/analyst_writer.md  # Analyst 威胁分级 + Writer 模板化周报（Phase 5）
 ├─ docs/reviewer.md        # Reviewer 审稿门卫（Phase 6）
-├─ docs/service.md         # 服务层：任务/定时/告警/健壮性（Phase 7）
-└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph/analyst_rubric/writer_report/reviewer_gate/service_runtime/service_api
+├─ docs/service.md         # 服务层：任务/定时/告警/健壮性 + 人工放行闭环/发布视图/面板（Phase 7+8）
+├─ docs/eval.md            # Eval-Harness 回放评测：三面六指标 + 对抗表 + 口径声明 + 门禁（Phase 8）
+└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph/analyst_rubric/writer_report/reviewer_gate/service_runtime/service_api/eval/panel_api
 ```
 `data/memory/`（运行产物，gitignored）：json 后端 = `fact_cards|snapshots/{竞品}/{period}.json`；sqlite = `memory.db`。
 `data/service/`（运行产物，gitignored）：`tasks/{task_id}.json`（TaskMeta 文件即状态）+ `alerts.json`（告警台账）。
@@ -205,8 +232,8 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph + fastapi + uvicorn + apscheduler）
-uv run pytest                # 全绿（Phase 7 = 144）
-uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts
+uv run pytest                # 全绿（Phase 8 = 165）
+uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts + /panel（0.8.0）
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
 # 去重 + 跨期 diff 验证：见 docs/memory.md §6（dedupe W35 5→3，diff adds=3）
@@ -214,6 +241,7 @@ uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + 
 # 分级 + 周报验证：见 docs/analyst_writer.md §7（threat_radar 之和 == diff K：crm {1,1,1} / bi {1,1,2}）
 # 门卫验证：见 docs/reviewer.md §8（注入 6 类假事件全拦 6/6、真实 W35 0 误拦；打回有 trace）
 # 服务层验证：见 docs/service.md §10（POST /tasks 计数链 + /report + /inbox + /alerts；故障演练 A/B；每周一 09:00 cron）
+# 评测验证：见 docs/eval.md §7（uv run python -m eval.run → 三面六指标 + 门禁；fail 退出码 1）
 ```
 
 ---
@@ -225,3 +253,4 @@ _更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 
 2026-09-03 更新（Phase 5：Analyst/Writer 行 ✅ 拆出、Reviewer 行 🟡、目录骨架加 analyst/writer 模块与 docs/analyst_writer.md、交付口径补 Phase 5）。
 2026-09-04 更新（Phase 6：Reviewer 行 ✅ 拆成 reviewer 包、LangGraph 行 4–6、目录骨架加 reviewer 模块与 docs/reviewer.md、pytest 110→123、交付口径补 Phase 6）。
 2026-09-04 更新（Phase 7：服务层行 ✅、任务/报告/告警 API 与 APScheduler 行 ✅、Reporter/Alert 行拆出（Alert 归 service/notifier）、目录骨架加 service 与 app/routers 模块、docs/service.md、pytest 123→144、交付口径补 Phase 7）。
+2026-09-04 更新（Phase 8：Eval 行 ✅（reporter/publisher 拆成占位）、人工放行闭环/发布视图/简单面板行 ✅、FastAPI version 0.7.0→0.8.0、目录骨架 eval/ 转实 + service/publish.py + app/routers/panel.py + docs/eval.md、pytest 144→165、交付口径补 Phase 8、沿革/不宣称段落补 P8 边界）。
