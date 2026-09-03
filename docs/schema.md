@@ -1,8 +1,10 @@
 # 数据模型与持久化（schema）
 
 > Phase 1 交付三类对象 **schema 定全** + 双后端可存可取 + mock 语料切"两周两期"快照；
-> Phase 3 让 `Event` 真正产出实例（Dedupe 合并），并给 `Snapshot` 加 `event_digests`（fp→内容摘要）承载 diff 的 change 判定。
-> 完整 ER 见设计稿 `README2.md` §3，本文是落地现状 + 决策说明。
+> Phase 3 让 `Event` 真正产出实例（Dedupe 合并），并给 `Snapshot` 加 `event_digests`（fp→内容摘要）承载 diff 的 change 判定；
+> Phase 4 用 LangGraph 把一轮周期跑成一份 **JSON-safe 运行 State**（`PeriodRunState`，编排层数据契约），
+> 可整体落盘 `data/pipeline/{run_id}.json`——但 `Event` 仍无独立持久化实体（见 §8 局限）。
+> 完整 ER 见设计稿 `README2.md` §3，本文是落地现状 + 决策说明；编排层 State 结构见 [`docs/orchestrator.md`](orchestrator.md)。
 
 ---
 
@@ -115,7 +117,7 @@ fixtures 两竞品 × website/news/rss，时间戳 `2026-08-17..08-30`，按原�
 ## 7. 运行与验证
 
 ```bash
-uv run pytest                        # 67 passed（Phase1 26 → 之后 schema/fingerprint/store/corpus/collectors/dedupe/diff 累计）
+uv run pytest                        # 81 passed（Phase1 26 → …collectors/dedupe/diff/orchestration_graph 累计，Phase 4 = 81）
 # 手工看语料分区：
 uv run python -c "from datetime import datetime; from config.settings import get_settings; from memory import build_period_cards; \
 print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / 'sources', 'crm_alpha', datetime(2026,8,31,9,0)).items()})"
@@ -125,13 +127,15 @@ print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / '
 
 ## 8. 局限（本阶段主动承认）
 
-- **语义近并只到版本锚/近原文**：embedding 级"异词异义同事件"（Phase 4 Qdrant）与跨期措辞变体语义同一性未做——
+- **语义近并只到版本锚/近原文**：embedding 级"异词异义同事件"（Qdrant，后置占位）与跨期措辞变体语义同一性未做——
   措辞变了再报道按新增处理（docs/memory.md §4 边界表）。
 - **change 只靠 digest 判**：证据与摘要都没变、但"含义实质变"判不出（属 Phase 6 Reviewer）；纯排版/证据序变化不误报。
-- **Event 无独立持久化实体**：本期以"Snapshot(fp+digest) + 进程内 Event"承载，Phase 4 编排接入时再落 Event 存储。
+- **Event 仍无独立持久化实体**：以 Snapshot(fp+digest) + 每轮运行 State 的 `events/changes` 字段承载；Phase 4 编排
+  落盘的 `data/pipeline/{run_id}.json` 是**整份运行状态**不是 Event 表（要单事件查询/检索再拆，属 P7+）。
 - **SQLite 按整期存 JSON blob**：够"回放 + 查最近快照"，未做单条查询/索引（真需要时拆行不迟）。
 - **无并发写**：单进程幂等即可（任务卡边界）。
 
 ---
 
-_更新日志_：2026-09-03 建（Phase 1 交付）；2026-09-03 更新（Phase 3：Event 产出实例、Snapshot.event_digests、新增 §5 diff 数据视角、口径与局限刷新）。
+_更新日志_：2026-09-03 建（Phase 1 交付）；2026-09-03 更新（Phase 3：Event 产出实例、Snapshot.event_digests、新增 §5 diff 数据视角、口径与局限刷新）；
+2026-09-03 更新（Phase 4：头注补运行 State、§7 pytest 67→81、局限刷新：Qdrant 后置、Event 仍无独立持久化）。

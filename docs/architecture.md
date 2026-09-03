@@ -2,10 +2,11 @@
 
 > 交付沿革：Phase 0 = 最小服务骨架 + Mock 底座；Phase 1 = 数据模型 + JSON/SQLite 持久化 + mock 语料切期；
 > Phase 2 = 采集层 Researchers（并发采 3 类信源 → 归一化 FactCard，单源失败隔离）；
-> Phase 3 = Dedupe 去重合并 + Memory/Diff 跨期 diff（FactCards → Events → 与上期快照比 → 变更事件 + 写档）。
+> Phase 3 = Dedupe 去重合并 + Memory/Diff 跨期 diff（FactCards → Events → 与上期快照比 → 变更事件 + 写档）；
+> Phase 4 = LangGraph 编排状态机把 P1–P3 串成周期流水线（Planner→Researchers→Dedupe/Diff→Analyst→Writer→Reviewer，全 mock）。
 > 本文先落两张与设计稿一致的 Mermaid（见 `README2.md` §4.1/§4.2），再给"今天真实能跑的部分 / 未来挂载点"对照，
 > 避免 README 只画将来、落地只有壳。数据模型细节见 [`docs/schema.md`](schema.md)，采集层细节见 [`docs/collectors.md`](collectors.md)，
-> 去重与跨期 diff 细节见 [`docs/memory.md`](memory.md)。
+> 去重与跨期 diff 细节见 [`docs/memory.md`](memory.md)，编排状态机细节见 [`docs/orchestrator.md`](orchestrator.md)。
 
 ---
 
@@ -75,7 +76,7 @@ flowchart LR
 
 ---
 
-## 3. 落地现状对照表（截至 Phase 3：哪些"今天就能跑"，哪些是占位）
+## 3. 落地现状对照表（截至 Phase 4：哪些"今天就能跑"，哪些是占位）
 
 | 层 | 设计稿节点 | Phase 0 状态 | 落地位置 |
 |---|---|---|---|
@@ -88,13 +89,13 @@ flowchart LR
 | 基础设施 | Mock 数据 | ✅ 2 竞品 × 3 信源 × 两周 | `fixtures/sources/{crm_alpha,bi_beta}.json`（W34/W35 两期可切） |
 | 基础设施 | SQLite/JSON 事实存储 | ✅ Phase 1 json 默认 / sqlite 可切，幂等覆盖 | `memory/{schemas,fingerprint,store,corpus,diff}.py`；根 `data/memory/` |
 | 基础设施 | 核心数据对象 | ✅ FactCard/Event/Snapshot schema 定全（Event 实例 Phase 3 已产出） | `memory/schemas.py` + `docs/schema.md` |
-| 基础设施 | Qdrant 语义聚类 | ⬜ Phase 4 | `config vector_db`（占位） |
+| 基础设施 | Qdrant 语义聚类 | ⬜ 后置占位（语义近并仍未做，走确定性规则） | `config vector_db`（占位） |
 | 核心业务层 | Researchers 并发采集 | ✅ Phase 2 collectors | `collectors/{schemas,normalize,worker,factory,orchestrator}.py` + `docs/collectors.md` |
 | 核心业务层 | Dedupe 去重合并 | ✅ Phase 3 规则分类 + 版本锚/近原文聚类 | `dedupe/{classify,merge,__init__}.py` + `docs/memory.md` |
 | 核心业务层 | Memory/Diff 跨期 diff | ✅ Phase 3 fp 认人 + digest 认内容 → add/change/remove/unchanged | `memory/diff.py`（build_snapshot/diff_event_sets/mark_removed）+ `docs/memory.md` |
-| 核心业务层 | 其余 6 个 Agent 模块 | ⬜ 类占位、无逻辑；memory / collectors / dedupe / diff 已落地（见上四行） | `orchestration/ analyst/ writer/ reviewer/ reporter/ eval/` 各 `__init__` 暴露类名 |
-| 核心业务层 | LangGraph 状态机 | ⬜ Phase 4 | `orchestration/` |
-| 评测 | Eval | ⬜ Phase 8 | `eval/harness.py`（占位类） |
+| 核心业务层 | Analyst / Writer / Reviewer | 🟡 Phase 4 在编排内以薄节点落地（结构真：选条写稿出判定；逻辑薄：severity=None、模板初稿、仅结构门卫）→ P5/P6 做实 | `orchestration/nodes.py`（analyst/writer/reviewer_node）+ `docs/orchestrator.md` |
+| 核心业务层 | Reporter/Alert / Eval | ⬜ 占位 | `orchestration/reporter`（占位包，P7）；`eval/harness.py`（占位类，P8） |
+| 核心业务层 | LangGraph 状态机 | ✅ Phase 4 | `orchestration/{state,planner,nodes,graph,pipeline}.py` + `docs/orchestrator.md` |
 
 > 图里 P1–P8 的灰块是**目标态**；上表第二列标了它们此刻对应哪个 Phase。交付口径：
 > Phase 1 交付 = 三类对象 schema 定全、JSON/SQLite 可存可取（幂等覆盖）、mock 语料可切 W34/W35 两期快照
@@ -103,8 +104,12 @@ flowchart LR
 > 单源失败隔离进 failures 清单不中断全局、trace 计数链第一节（fetched→cards→failed）。
 > Phase 3 交付 = **去重 + 跨期 diff**：确定性维度分类（fp 定锚前置）+ 版本锚/近原文聚类（Evidence 聚合）
 > + 上期快照 vs 本期事件 diff（add/change/unchanged + 显式 remove，Snapshot 增 event_digests 判变更）。
-> ——**不宣称已连真实网络 / 已编排 / 已产出情报 / 已能语义判同**：真实 adapter 与跨竞品 fan-out 在接入期；
-> LangGraph 编排 Phase 4；语义近并（embedding/Qdrant）与跨期语义同一性 Phase 4；Analyst 归类分级 Phase 5。
+> Phase 4 交付 = **LangGraph 编排状态机**：planner / researchers / dedupe_diff 是真节点（复用 P1–P3 已测库），
+> analyst / writer / reviewer 以薄节点落地（结构真、逻辑留给 P5/P6），共享可序列化 State + checkpoint + 门卫条件边，
+> 全 mock 下 81 测试全绿（编排 14 条）——一条命令出「周报初稿 + 门卫判定」。
+> ——**不宣称已连真实网络 / 已产出 LLM 情报 / 已能语义判同**：真实 adapter 与跨竞品 fan-out 在接入期；
+> Analyst 归类分级 + 威胁 rubric 是 Phase 5；Reviewer 语义 grounding / 矛盾 / 合规是 Phase 6；
+> 语义近并（embedding/Qdrant）后置占位（近原文去重仍走确定性规则，见 docs/memory.md 边界表）。
 
 ## 4. 目录骨架
 
@@ -126,13 +131,18 @@ competition-watch-engine/
 │  └─ __init__.py          # 导出 build_collectors/collect_competitor/collect_all/CollectSummary 等
 ├─ dedupe/                 # Phase 3：classify(维度规则分类,fp 定锚前置) / merge(版本锚+近原文聚类→Events)
 │  └─ __init__.py          # 导出 classify_dimension/version_anchor/merge_to_events/read_competitor_aliases
-├─ orchestration/ analyst/ writer/ reviewer/ reporter/ eval/
-│                          # 6 业务包占位（Phase 4/5/6/7/8 落地类）
+├─ orchestration/          # Phase 4：state(共享可序列化 State) / planner(周期换算: since/run_id)
+│  │                       #          / nodes(七节点: 复用 collectors+dedupe+diff; analyst/writer/reviewer 薄)
+│  │                       #          / graph(StateGraph+MemorySaver+门卫条件边) / pipeline(run_cycle/demo_two_weeks)
+│  └─ __init__.py          # 导出 Planner/PeriodRunState/build_graph/run_cycle/demo_two_weeks
+├─ analyst/ writer/ reviewer/ reporter/ eval/
+│                          # 薄节点本期落在 orchestration/nodes.py 内；独立包仍占位（P5/6/8 视需要拆出）
 ├─ docs/architecture.md    # 本文
 ├─ docs/schema.md          # 数据模型与持久化（Phase 1）
 ├─ docs/collectors.md      # 采集层设计：并发/隔离/计数说明（Phase 2）
 ├─ docs/memory.md          # 去重合并与跨期 diff（Phase 3）
-└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff
+├─ docs/orchestrator.md    # 编排状态机（Phase 4）
+└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph
 ```
 `data/memory/`（运行产物，gitignored）：json 后端 = `fact_cards|snapshots/{竞品}/{period}.json`；sqlite = `memory.db`。
 
@@ -147,16 +157,18 @@ competition-watch-engine/
 ## 6. 运行方式
 
 ```bash
-uv sync                      # 安装依赖（含 dev: pytest/httpx）
-uv run pytest                # 全绿（Phase 3 = 67）
+uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph）
+uv run pytest                # 全绿（Phase 4 = 81）
 uv run uvicorn app.main:app --port 8000   # 启动后访问 /health
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
 # 去重 + 跨期 diff 验证：见 docs/memory.md §6（dedupe W35 5→3，diff adds=3）
+# 编排验证：见 docs/orchestrator.md §7（demo_two_weeks 回放：trace 2→2→2 / 5→3→3，gate 全 PASS）
 ```
 
 ---
 
 _更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 1：DB 行 ✅、目录骨架加 memory 模块、docs/schema.md）；
 2026-09-03 更新（Phase 2：Researchers 行 ✅、目录骨架加 collectors 模块、docs/collectors.md、交付口径补 Phase 2）；
-2026-09-03 更新（Phase 3：Dedupe + Memory/Diff 行 ✅、目录骨架加 dedupe 模块与 memory/diff.py、docs/memory.md、交付口径补 Phase 3）。
+2026-09-03 更新（Phase 3：Dedupe + Memory/Diff 行 ✅、目录骨架加 dedupe 模块与 memory/diff.py、docs/memory.md、交付口径补 Phase 3）；
+2026-09-03 更新（Phase 4：LangGraph 状态机行 ✅、薄节点行 🟡、Qdrant 行改后置、目录骨架加 orchestration 模块、docs/orchestrator.md、交付口径补 Phase 4）。

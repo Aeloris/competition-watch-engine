@@ -5,28 +5,32 @@
 > 完整设计稿（数据对象、编排状态机、目标指标、阶段路线）见父级 `D:\develop\MyProject\README2.md`；
 > 落地现状见 [`docs/architecture.md`](docs/architecture.md)。
 
-## 当前进度：Phase 3（去重合并 Dedupe + 跨期 diff Memory/Diff）
+## 当前进度：Phase 4（LangGraph 端到端编排）
 
 沿革：Phase 0 = 最小服务骨架 + Mock 底座；Phase 1 = 数据模型/持久化/指纹；Phase 2 = 采集层（并发、隔离、可数）；
-Phase 3 = **把散落的证据卡并成"事件"、再和上期记忆比出"本周变了什么"**——项目灵魂"跨期找变化"落地：
+Phase 3 = **去重并事件 + 跨期 diff 找"本周变了什么"**；Phase 4 = **把 P1–P3 用 LangGraph 串成一条可跑的周期流水线**，
+一条命令出「周报初稿 + 门卫判定」：
 
-- **确定性维度分类** `dedupe/classify.py`：发布/调价/行业/组织/合规 规则关键词 → `Dimension`，**fp 首次去重前就冻结**
-  （维度混进 fp，Phase 5 再分类会改 fp、把一件事 diff 成"消失+新增"，所以先用规则占位）。
-- **去重合并** `dedupe/merge.py`：发布/上线类事件按**版本锚**（v12.0 / 3.0 / v12.1）跨措辞认亲，无锚卡只并近原文重复；
-  并完取最早发布卡标题当 canonical title、`event_fingerprint` 定锚，`evidence_urls` 聚合 = **同一件事带全部佐证出处**。
-  fixtures 真值：crm W35 5 卡→3 事件（v12.0 官网/changelog/媒体三源并入一、证据=3），bi W35 5 卡→4 事件（图表库 3.0 双源并入一）。
-- **跨期 diff** `memory/diff.py`：上期快照 vs 本期事件，**每 fp 判一次** → add（新增）/ change（同 fp 内容摘要变了）/
-  unchanged（同 fp 同摘要 → **零重复计算**）/ remove（**只来自显式撤回**，上期有但本期没报道 ≠ 消失，绝不自动推断）。
-  为此 Snapshot 扩展 `event_digests`（fp → 内容摘要 = 证据 url 排序 + 压白摘要的 sha1），双后端向后兼容。
-- **快照写档**：`build_snapshot` 把每期 Event 集固化（fps + digests），JSON/SQLite 幂等覆盖，下期 diff 的比对底。
-- **诚实边界**：语义近并只到版本锚/近原文（embedding + Qdrant + 跨期措辞语义同一性如实留 Phase 4）；措辞变了再报道 = 本期新增。
-- **trace 计数链**：采集 N（Phase 2）→ 去重剩 M（`DedupeSummary`）→ diff 出 K（`DiffSummary`）三段齐了。
+- **编排状态机** `orchestration/{state,planner,nodes,graph,pipeline}.py`：
+  `Planner → Researchers(并行) → Dedupe/Diff → Analyst → Writer → Reviewer`。
+  planner / researchers / dedupe_diff 是**真节点**（复用 collectors 并发 + 单源失败隔离、dedupe 去重合并、
+  memory.diff 跨期对比 + 快照写档）；analyst / writer / reviewer 本期是**"结构真、逻辑薄"节点**（severity 占位、模板初稿、
+  结构性门卫）——威胁分级 rubric / 语义审稿分别留 P5 / P6。
+- **共享可序列化 State + checkpoint**：节点契约 `(state) → 部分更新`，`PeriodRunState` 全 JSON-safe →
+  `persist=True` 整体落 `data/pipeline/{run_id}.json`（文件即状态），MemorySaver 按 thread_id(=run_id) 可取回某轮状态。
+- **门卫 + 条件边（先审后发）**：reviewer 查每条**必有出处**(evidence_urls) / 标题 / 观察维度；有缺口 → `REWRITE`
+  沿条件边回 Writer 重写（额度 `review_max_rewrites=2`），额度用尽 → `human` 转人工收件箱、**不自动放行**；无缺口 → `PASS`。
+  测试里注入坏 writer（无出处条目）锁死"打回 2 次 → human"这条回路。
+- **真值 trace（实测非编造）**：`demo_two_weeks()` 两竞品 × (W34 冷启动 → W35 对上期) →
+  crm 2→2→2 / **5→3→3**（v12.0 官网+rss+媒体三源并入一、evidence=3），bi 2→2→2 / 5→4→4，gate 全 PASS；重跑同周期 diff=0。
+- **诚实边界**：Analyst 威胁分级 + Writer 威胁雷达 = Phase 5；Reviewer 语义 grounding / 矛盾 / 合规 = Phase 6；
+  语义近并（embedding/Qdrant）后置占位；本期 Analyst/Writer/Reviewer 只做结构不做假深度。细节见 [`docs/orchestrator.md`](docs/orchestrator.md)。
 
 ```bash
 uv sync
-uv run pytest            # 全绿（67）
-uv run uvicorn app.main:app --port 8000
-# http://127.0.0.1:8000/health
+uv run pytest            # 全绿（81）
+uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"   # 两竞品×两期回放，打印 trace N→M→K + gate
+uv run uvicorn app.main:app --port 8000   # http://127.0.0.1:8000/health
 ```
 
 ## 目录
@@ -35,9 +39,12 @@ uv run uvicorn app.main:app --port 8000
 app/    FastAPI 入口        config/  强类型配置(fail-fast)
 llm/    Provider 抽象       sources/ 信源适配器 + MockSource
 memory/ 数据对象+持久化+指纹+跨期diff   collectors/ 采集层：并发/归一化/失败隔离
-dedupe/ 维度规则分类 + 版本锚去重合并     fixtures/ 离线回放底座
-docs/   schema.md 数据模型 · collectors.md 采集层 · memory.md 去重+跨期diff · architecture.md 骨架现状
-tests/  冒烟 / mock / 数据层 / 采集层 / 去重 / diff
+dedupe/ 维度规则分类 + 版本锚去重合并     orchestration/ LangGraph 状态机（Phase 4）
+fixtures/ 离线回放底座
+docs/   architecture.md 骨架现状 · schema.md 数据模型 · collectors.md 采集层 · memory.md 去重+diff · orchestrator.md 编排
+tests/  冒烟 / mock / 数据层 / 采集层 / 去重 / diff / 编排状态机
 ```
 
-业务包 `orchestration/ analyst/ writer/ reviewer/ reporter/ eval/` 现为占位类，按 Phase 计划落地；memory / collectors / dedupe / diff 已落地（见上）。
+`orchestration/` Phase 4 已落地：state（共享可序列化 State）/ planner（周期换算）/ nodes（七节点，analyst·writer·reviewer 薄）/
+graph（StateGraph + MemorySaver + 门卫条件边）/ pipeline（run_cycle / demo_two_weeks）。
+`analyst/ writer/ reviewer/ reporter/ eval/` 独立包仍占位——前三个本期以薄节点落在 `orchestration/nodes.py` 内，按 Phase 5/6/8 计划视需要拆出。
