@@ -1,8 +1,9 @@
 # 架构与骨架现状（architecture）
 
-> 交付沿革：Phase 0 = 最小服务骨架 + Mock 底座；Phase 1 = 数据模型 + JSON/SQLite 持久化 + mock 语料切期。
+> 交付沿革：Phase 0 = 最小服务骨架 + Mock 底座；Phase 1 = 数据模型 + JSON/SQLite 持久化 + mock 语料切期；
+> Phase 2 = 采集层 Researchers（并发采 3 类信源 → 归一化 FactCard，单源失败隔离）。
 > 本文先落两张与设计稿一致的 Mermaid（见 `README2.md` §4.1/§4.2），再给"今天真实能跑的部分 / 未来挂载点"对照，
-> 避免 README 只画将来、落地只有壳。数据模型细节见 [`docs/schema.md`](schema.md)。
+> 避免 README 只画将来、落地只有壳。数据模型细节见 [`docs/schema.md`](schema.md)，采集层细节见 [`docs/collectors.md`](collectors.md)。
 
 ---
 
@@ -72,7 +73,7 @@ flowchart LR
 
 ---
 
-## 3. 落地现状对照表（截至 Phase 1：哪些"今天就能跑"，哪些是占位）
+## 3. 落地现状对照表（截至 Phase 2：哪些"今天就能跑"，哪些是占位）
 
 | 层 | 设计稿节点 | Phase 0 状态 | 落地位置 |
 |---|---|---|---|
@@ -81,18 +82,22 @@ flowchart LR
 | 服务层 | APScheduler 定时 | ⬜ Phase 7 | `config/config.yaml schedule`（占位） |
 | 基础设施 | 配置 YAML | ✅ fail-fast 强类型 | `config/config.yaml` + `config/settings.py` |
 | 基础设施 | LLM 抽象 | ✅ Mock 离线默认 | `llm/base.py` `mock_provider.py`；dashscope 壳未接 key（`dashscope_provider.py` raise） |
-| 基础设施 | 信源适配器 | ✅ 抽象 + MockSource | `sources/base.py` + `sources/mock.py`；真实 HTTP/RSS 未实现（Phase 2） |
+| 基础设施 | 信源适配器 | ✅ 抽象 + MockSource | `sources/base.py` + `sources/mock.py`；真实 HTTP/RSS adapter 仍占位（无 key 离线优先） |
 | 基础设施 | Mock 数据 | ✅ 2 竞品 × 3 信源 × 两周 | `fixtures/sources/{crm_alpha,bi_beta}.json`（W34/W35 两期可切） |
 | 基础设施 | SQLite/JSON 事实存储 | ✅ Phase 1 json 默认 / sqlite 可切，幂等覆盖 | `memory/{schemas,fingerprint,store,corpus}.py`；根 `data/memory/` |
 | 基础设施 | 核心数据对象 | ✅ FactCard/Event/Snapshot schema 定全（Event 实例留 Phase 3） | `memory/schemas.py` + `docs/schema.md` |
 | 基础设施 | Qdrant | ⬜ Phase 3 | `config vector_db`（占位） |
-| 核心业务层 | 8 个 Agent 模块 | ⬜ 类占位、无逻辑；memory 层已落地（见上两行） | `orchestration/ collectors/ analyst/ writer/ reviewer/ reporter/ eval/` 各 `__init__` 暴露类名 |
+| 核心业务层 | Researchers 并发采集 | ✅ Phase 2 collectors | `collectors/{schemas,normalize,worker,factory,orchestrator}.py` + `docs/collectors.md` |
+| 核心业务层 | 其余 7 个 Agent 模块 | ⬜ 类占位、无逻辑；memory 与 collectors 已落地（见上两行） | `orchestration/ analyst/ writer/ reviewer/ reporter/ eval/` 各 `__init__` 暴露类名 |
 | 核心业务层 | LangGraph 状态机 | ⬜ Phase 4 | `orchestration/` |
 | 评测 | Eval | ⬜ Phase 8 | `eval/harness.py`（占位类） |
 
 > 图里 P1–P8 的灰块是**目标态**；上表第二列标了它们此刻对应哪个 Phase。交付口径：
 > Phase 1 交付 = 三类对象 schema 定全、JSON/SQLite 可存可取（幂等覆盖）、mock 语料可切 W34/W35 两期快照
-> ——给 Phase 3 diff 留档的地基；**不宣称 diff/情报已能产出**。
+> ——给 Phase 3 diff 留档的地基。
+> Phase 2 交付 = **采集层**：每源一个 CollectorWorker 并发采（asyncio+信号量限流）、RawItem→FactCard 唯一归一化入口、
+> 单源失败隔离进 failures 清单不中断全局、trace 计数链第一节（fetched→cards→failed）。
+> ——**不宣称已连真实网络 / 竞品已编排 / 情报已能产出**（真实 HTTP/RSS adapter 与跨竞品 fan-out 分别在接入期/Phase 4）。
 
 ## 4. 目录骨架
 
@@ -108,11 +113,15 @@ competition-watch-engine/
 │  └─ llm/reply.json      # MockProvider 固定回复
 ├─ memory/                 # Phase 1：schemas(数据对象) / fingerprint(fp) / store(双后端) / corpus(语料切期)
 │  └─ __init__.py          # 导出 FactCard/Event/Snapshot、MemoryStore、build_period_cards 等
-├─ orchestration/ collectors/ analyst/ writer/ reviewer/ reporter/ eval/
-│                          # 7 业务包占位（Phase 4/3/5/6/7/8 落地类）
+├─ collectors/             # Phase 2：schemas(统计/结果) / normalize(RawItem→FactCard) / worker(隔离+重试占位)
+│  │                       #          / factory(每源一个 Worker) / orchestrator(信号量并发汇总)
+│  └─ __init__.py          # 导出 build_collectors/collect_competitor/collect_all/CollectSummary 等
+├─ orchestration/ analyst/ writer/ reviewer/ reporter/ eval/
+│                          # 6 业务包占位（Phase 4/5/6/7/8 落地类）
 ├─ docs/architecture.md    # 本文
 ├─ docs/schema.md          # 数据模型与持久化（Phase 1）
-└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus
+├─ docs/collectors.md      # 采集层设计：并发/隔离/计数说明（Phase 2）
+└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors
 ```
 `data/memory/`（运行产物，gitignored）：json 后端 = `fact_cards|snapshots/{竞品}/{period}.json`；sqlite = `memory.db`。
 
@@ -127,11 +136,13 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx）
-uv run pytest                # 全绿（Phase 1 = 34）
+uv run pytest                # 全绿（Phase 2 = 44）
 uv run uvicorn app.main:app --port 8000   # 启动后访问 /health
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
+# 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
 ```
 
 ---
 
-_更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 1：DB 行 ✅、目录骨架加 memory 模块、docs/schema.md）。
+_更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 1：DB 行 ✅、目录骨架加 memory 模块、docs/schema.md）；
+2026-09-03 更新（Phase 2：Researchers 行 ✅、目录骨架加 collectors 模块、docs/collectors.md、交付口径补 Phase 2）。
