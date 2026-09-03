@@ -6,6 +6,8 @@
 - GET /tasks / GET /tasks/{id}：TaskStore 文件即状态直接读；404 = 任务不存在。
 - GET /tasks/{id}/report：把该 Task 各 done run 的全量周报 draft（headline/sections/items/sources）
   从 data/pipeline/{run_id}.json 合并回来（TaskStore 只存元数据索引，全量 state 在 pipeline 层）。
+- GET /tasks/{id}/published（Phase 8）：发布视图——把 draft 按人工 resolution 过滤成
+  published / held / dismissed（先审后发闭环的可复核快照；逻辑在 service/publish）。
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from app.routers.deps import get_service_ctx
 from service.context import ServiceContext
+from service.publish import EntryNotFound, published_view
 from service.runner import available_competitors
 from service.schemas import RunStatus
 
@@ -100,3 +103,12 @@ def get_task_report(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)
         "status": meta.status.value,
         "report": comps,
     }
+
+
+@router.get("/{task_id}/published")
+def get_task_published(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)) -> dict:
+    """发布视图（Phase 8）：人工放行闭环后的可发布周报 + 挂起/剔除审计区（service/publish.published_view）。"""
+    try:
+        return published_view(ctx.task_store, ctx.settings, task_id)
+    except EntryNotFound:
+        raise HTTPException(status_code=404, detail=f"task {task_id} 不存在")
