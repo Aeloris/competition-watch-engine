@@ -76,7 +76,7 @@ exec('def m():\n s=get_settings(); a=read_competitor_aliases(s.fixtures_path/\"s
 ## 7. 局限（本阶段主动承认）
 
 - **近义合并只到版本锚/近原文**：异词异义语义并（embedding）待 Phase 4 Qdrant；跨期措辞变体按新增。
-- **change 判定靠 digest**：同 fp 但仅排版/证据 url 顺序变化不会误报（url 先排序、摘要先压白）；但"内容实质变但摘要与证据都没变"判不出——那是 Reviewer(Phase 6) 的地盘。
+- **change 判定靠 digest**：同 fp 但仅排版/证据 url 顺序变化不会误报（url 先排序、摘要先压白）；但"内容实质变但摘要与证据都没变"判不出——那是"读原文语义"的活，P6 Reviewer 的 grounding 是闭环自证、不读语义，仍判不出（见 docs/reviewer.md 局限）。
 - **Event 记忆未持久化为独立实体**：本期以"快照(fp+digest) + 进程内 Event"承载；Phase 4 编排接入时再落 Event 存储。
 - **单进程、无并发写**：同 Phase 1 口径。
 

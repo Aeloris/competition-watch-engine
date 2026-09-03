@@ -118,7 +118,7 @@ W35（对上期 W34 的 diff）每个变更事件的分级实测：
 ## 7. 运行与验证
 
 ```bash
-uv sync && uv run pytest -q            # 全绿（Phase 5 = 110；P5 新增 analyst 15 + writer 11 + 编排补 3）
+uv sync && uv run pytest -q            # 全绿（Phase 5 = 110；P5 新增 analyst 15 + writer 11 + 编排补 3；当前累计 123 含 Phase 6 reviewer gate 13）
 uv run pytest tests/test_analyst_rubric.py -q   # 分级：fixtures 校准 / 顺序铁律 / 理由链 / 不改维度
 uv run pytest tests/test_writer_report.py -q    # 周报：只组装不发挥 / schema fail-fast / 雷达重算 / 空周报合法
 uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"
@@ -131,10 +131,12 @@ uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"
   **LLM 补语义**层在规则之后兜底，本期不接、不假装。
 - **不跨竞品横向对比**：本期分级是"单竞品单事件"口径；"crm 的降价 vs 我方价格带"这类**横向威胁对比 / 功能矩阵**仍未做。
 - **Writer 不做正文叙述**：只输出结构化条目 + 雷达 + 出处清单；"自然语言周报正文/摘要生成"需要 LLM，且引入编造风险，后置。
-- **Reviewer 仍是结构门卫**（每条必带出处/标题/维度 + P5 新增"已分级、带理由"）：它**不证明理由真实支撑结论**
-  ——原文 grounding / 矛盾检测 / 合规评审是 Phase 6，别把 P5 说成已审稿。
+- **Reviewer 已不在本文范围**：P5 交付时 reviewer 只是结构门卫（不证明理由真实支撑结论）；Phase 6 已把它做实为
+  审稿门卫（grounding 闭环自证 / 矛盾 / 与上期重复，typed problems + 人工收件箱），但仍是**不读原文语义**的
+  确定性审稿 —— 见 [`docs/reviewer.md`](reviewer.md)。本页只管 Analyst 分级 + Writer 周报的确定性口径。
 - **severity 是确定性口径**，不是贝叶斯风险概率；"该不该动作"只给出提示词，最终判断留给人工/后续管线。
 
 ---
 
 _更新日志_：2026-09-03 建（Phase 5 交付：Analyst rubric 分级 + Writer WeeklyReport schema 合规，110 测试全绿）。
+2026-09-04 更新（Phase 6：§8 Reviewer 边界改为指向 docs/reviewer.md——P6 已做实确定性审稿，LLM 语义审稿仍后置）。

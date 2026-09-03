@@ -74,6 +74,7 @@ def demo_two_weeks(settings: Settings | None = None, *, store: MemoryStore | Non
                 f"→ diff={trace.get('diff')}) · "
                 f"draft.sections={draft.get('sections')} · "
                 f"threat_radar={radar} · "
-                f"gate={gate.get('verdict')}"
+                f"gate={gate.get('verdict')} · "
+                f"gate_trace={len(final.get('gate_trace') or [])} · human_inbox={len(final.get('human_inbox') or [])}"
             )
     return results

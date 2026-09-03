@@ -41,12 +41,15 @@ def _proj(final: dict) -> dict:
     """确定性投影：剔除 Event.created_at 等时间戳，只看编排语义。
 
     P5 扩展：纳入每条 severity 序列 + 威胁雷达 → 同语料重跑，分级也必须逐条稳定。
+    P6 扩展：纳入 gate_trace（门卫审计迹）+ human_inbox（人工收件箱）→ 门卫判定也逐条稳定。
     """
     draft = final.get("draft") or {}
     return {
         "trace": final.get("trace"),
         "diff_summary": final.get("diff_summary"),
         "gate": final.get("gate"),
+        "gate_trace": final.get("gate_trace"),
+        "human_inbox": final.get("human_inbox"),
         "changes_fps": sorted(c.get("fp") for c in final.get("changes", [])),
         "sections": draft.get("sections"),
         "severities": tuple(i.get("severity") for i in draft.get("items", [])),
@@ -176,44 +179,59 @@ def _ctx():
     return SimpleNamespace(review_max_rewrites=2)
 
 
-def _clean_item(title: str = "T", urls=None, severity: str = "medium", reasons=None) -> dict:
-    """P5 合规条目：有出处 + 已分级 + 带理由（reviewer 通过门槛的最低形态）。
+def _clean_item(title: str = "T", urls=None, severity: str = "medium", reasons=None,
+                fp: str | None = None, kind: str = "add") -> dict:
+    """P6 合规条目：有出处 + 已分级 + 带理由 + 有身份 fp（reviewer 通过门槛的最低形态）。
 
-    注意：空 list/None 是"故意缺口"，必须原样保留（不能用 `x or 默认`——会把空列表顶成默认值）。
+    注意：None/空 list 是"故意缺口"，必须原样保留（不能用 `x or 默认`——会把空列表顶成默认值）。
+    fp 默认 None → 不写 fp 键（刻意留"缺身份"缺口）；要"干净"就显式给 fp。
     """
-    return {"title": title, "evidence_urls": ["https://x/1"] if urls is None else list(urls),
+    item = {"title": title, "kind": kind,
+            "evidence_urls": ["https://x/1"] if urls is None else list(urls),
             "dimension": "feature", "severity": severity,
             "reasons": ["规则[feature_update]：常规迭代"] if reasons is None else list(reasons)}
+    if fp is not None:
+        item["fp"] = fp
+    return item
 
 
 def test_reviewer_unit_clean_pass(tmp_path):
-    state = {"draft": {"items": [_clean_item()]}, "rewrites": 0}
+    state = {"draft": {"items": [_clean_item(fp="fp-clean")]}, "rewrites": 0}
     out = reviewer_node(state, _ctx())
     assert out["gate"]["verdict"] == "PASS" and out["gate"]["reasons"] == []
+    assert out["gate"]["problems"] == []
+    assert out["human_inbox"] == []
+    assert len(out["gate_trace"]) == 1 and out["gate_trace"][0]["verdict"] == "PASS"  # PASS 也留审计迹
 
 
 def test_reviewer_unit_gap_rewrite_then_human(tmp_path):
-    poisoned = {"draft": {"items": [_clean_item(title="无出处", urls=[])]}}
+    poisoned = {"draft": {"items": [_clean_item(title="无出处", urls=[], fp="fp-noev")]}}
     r1 = reviewer_node({**poisoned, "rewrites": 0}, _ctx())
     assert r1["gate"]["verdict"] == "REWRITE" and r1["rewrites"] == 1
     r2 = reviewer_node({**poisoned, "rewrites": 1}, _ctx())
     assert r2["gate"]["verdict"] == "REWRITE" and r2["rewrites"] == 2
     r3 = reviewer_node({**poisoned, "rewrites": 2}, _ctx())
     assert r3["gate"]["verdict"] == "human" and r3["rewrites"] == 2  # 额度用尽 → 转人工不自动放行
+    # 结构缺口额度用尽转人工 → 问题落人工收件箱 + 本次判定带结构化问题
+    assert len(r3["human_inbox"]) == 1 and r3["human_inbox"][0]["code"] == "NO_EVIDENCE"
+    assert r3["gate_trace"][-1]["verdict"] == "human"
+    assert r3["gate_trace"][-1]["problems"][0]["code"] == "NO_EVIDENCE"
+    # （审计迹跨打回累加在 graph 级测试锁：test_graph_rewrite_loop_ends_human_on_poison）
 
 
 def test_reviewer_unit_missing_severity_rewrite_then_human(tmp_path):
     """P5 门卫新增校验：条目未分级（缺 severity）→ 打回；额度用尽 → human 不自动放行。"""
-    ungraded = {"draft": {"items": [_clean_item(severity=None)]}}
+    ungraded = {"draft": {"items": [_clean_item(severity=None, fp="fp-sev")]}}
     r1 = reviewer_node({**ungraded, "rewrites": 0}, _ctx())
     assert r1["gate"]["verdict"] == "REWRITE" and r1["rewrites"] == 1
     assert any("未分级" in p for p in r1["gate"]["reasons"])
+    assert r1["gate"]["problems"][0]["code"] == "MISSING_SEVERITY"
     r3 = reviewer_node({**ungraded, "rewrites": 2}, _ctx())
     assert r3["gate"]["verdict"] == "human" and r3["rewrites"] == 2
 
 
 def test_reviewer_unit_missing_reasons_rewrite(tmp_path):
-    ungraded = {"draft": {"items": [_clean_item(reasons=[])]}}  # 显式空理由 = "缺理由"缺口
+    ungraded = {"draft": {"items": [_clean_item(reasons=[], fp="fp-reasons")]}}  # 显式空理由 = "缺理由"缺口
     r1 = reviewer_node({**ungraded, "rewrites": 0}, _ctx())
     assert r1["gate"]["verdict"] == "REWRITE"
     assert any("reasons 空" in p for p in r1["gate"]["reasons"])
@@ -238,6 +256,9 @@ def test_graph_rewrite_loop_ends_human_on_poison(tmp_path, monkeypatch):
     monkeypatch.setitem(graph_mod.NODE_IMPLS, "writer", poison_writer)
     final = run_cycle(SETTINGS, COMP, "2026-W35", store=_store(tmp_path), run_id="poison")
     assert final["gate"]["verdict"] == "human" and final["rewrites"] == 2
+    # P6：打回审计迹跨打回逐次累加（每次判定一条），问题条目落人工收件箱
+    assert [t["verdict"] for t in final["gate_trace"]] == ["REWRITE", "REWRITE", "human"]
+    assert final["human_inbox"] and final["human_inbox"][0]["code"] in ("NO_EVIDENCE", "MISSING_FP")
 
 
 # ---------- 失败隔离在编排层成立 ----------

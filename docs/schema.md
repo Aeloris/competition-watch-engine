@@ -119,7 +119,7 @@ fixtures 两竞品 × website/news/rss，时间戳 `2026-08-17..08-30`，按原�
 ## 7. 运行与验证
 
 ```bash
-uv run pytest                        # 110 passed（Phase1 26 → …累计到 Phase 5 = 110：采集/去重/diff/编排/分级/周报）
+uv run pytest                        # 123 passed（Phase1 26 → …累计到 Phase 6 = 123：采集/去重/diff/编排/分级/周报/门卫）
 # 手工看语料分区：
 uv run python -c "from datetime import datetime; from config.settings import get_settings; from memory import build_period_cards; \
 print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / 'sources', 'crm_alpha', datetime(2026,8,31,9,0)).items()})"
@@ -131,7 +131,7 @@ print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / '
 
 - **语义近并只到版本锚/近原文**：embedding 级"异词异义同事件"（Qdrant，后置占位）与跨期措辞变体语义同一性未做——
   措辞变了再报道按新增处理（docs/memory.md §4 边界表）。
-- **change 只靠 digest 判**：证据与摘要都没变、但"含义实质变"判不出（属 Phase 6 Reviewer）；纯排版/证据序变化不误报。
+- **change 只靠 digest 判**：证据与摘要都没变、但"含义实质变"判不出（要"读原文语义"，P6 Reviewer 的 grounding 是闭环自证、不读语义，仍未判出）；纯排版/证据序变化不误报。
 - **Event 仍无独立持久化实体**：以 Snapshot(fp+digest) + 每轮运行 State 的 `events/changes` 字段承载；Phase 4 编排
   落盘的 `data/pipeline/{run_id}.json` 是**整份运行状态**不是 Event 表（要单事件查询/检索再拆，属 P7+）。
 - **SQLite 按整期存 JSON blob**：够"回放 + 查最近快照"，未做单条查询/索引（真需要时拆行不迟）。
@@ -142,4 +142,5 @@ print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / '
 _更新日志_：2026-09-03 建（Phase 1 交付）；2026-09-03 更新（Phase 3：Event 产出实例、Snapshot.event_digests、新增 §5 diff 数据视角、口径与局限刷新）；
 2026-09-03 更新（Phase 4：头注补运行 State、§7 pytest 67→81、局限刷新：Qdrant 后置、Event 仍无独立持久化）。
 2026-09-03 更新（Phase 5：§3 口径改过去时——Analyst 只读 dimension 分级填 severity，绝不改 dimension/fp/kind，附锁死测试名）。
+2026-09-04 更新（Phase 6：§7 pytest 110→123，含 reviewer 门卫测试）。
 

@@ -11,7 +11,9 @@ Phase 演进：P4 打通编排（图跑得通、测得死）；P5 把两个薄�
   （确定性、可解释；只读 dimension、不改 fp；LLM 补语义等真 provider 再接）；
 - **writer（P5 做实）** → 把已分级条目组装成 WeeklyReport（pydantic schema 强制合规：
   每条必有 severity/reasons/出处；威胁雷达与 kind 计数自洽），只组装、绝不补充常识；
-- **reviewer 仍是结构性门卫**（每条必带出处/标题/维度 + 已分级带理由；语义 grounding / 矛盾检测是 P6）。
+- **reviewer（P6 做实）** → 审稿门卫：grounding 闭环自证（来源必在本期采集卡、fp 必在本期
+  diff 变更集、理由命中词必在正文）+ 显式反义极性矛盾 + 与上期重复；结构性缺口打回 Writer
+  （限次），信任类问题直转人工收件箱并落 gate_trace / human_inbox（先审后发）。
 
 数据流里的 pydantic 只在节点内部出现；写进共享 State 的永远是 JSON-safe 的 dict/list，
 保证"共享 State 可序列化"字面成立（最终可直接落盘 / checkpoint）。
@@ -40,6 +42,7 @@ from orchestration.planner import (
     period_end_exclusive,
     period_start,
 )
+from reviewer import STRUCTURAL_CODES, TRUST_CODES, Reviewer
 from writer import Writer
 
 
@@ -172,36 +175,65 @@ def writer_node(state: dict, ctx: NodeContext) -> dict:
     return {"draft": report.model_dump(mode="json")}
 
 
-# ---------------------------------------------------------------- reviewer（结构性门卫，薄）
+# ---------------------------------------------------------------- reviewer（P6 审稿门卫）
 def reviewer_node(state: dict, ctx: NodeContext) -> dict:
-    """结构性门卫：周报每条必须有出处、必填齐全 + P5 已分级带理由。
+    """审稿门卫（P6）：grounding 闭环自证 + 反义极性矛盾 + 与上期重复 + 结构合规。
 
-    有缺口 → verdict=REWRITE（还有改写额度）或 human（额度用尽 → 低置信转人工）；
-    无缺口 → PASS。语义 grounding（原文是否真支撑结论）与矛盾检测属 P6 —— 这里只做结构完整性。
+    判定依据是**本 run 的证据**（state.cards / changes / unchanged_fps），不是 Writer 自述
+    （门卫独立，reviewer 包不依赖 writer 包）。路由策略：
+      - 结构性缺口（格式病）→ 额度内 REWRITE 打回 Writer，用尽 → human；
+      - 信任类问题（编造 URL / 凭空 fp / 理由与文本不符 / 条目互斥 / 旧闻重发）
+        → **直转 human，不走改写**（让 Writer 改写一个没出处的结论 = 逼它编造），并落人工收件箱。
+    每次判定 append gate_trace（README2 §5.8 打回有 trace）；human 时把问题条目落 human_inbox。
     """
     draft = state.get("draft", {})
-    problems: list[str] = []
-    for i, item in enumerate(draft.get("items", []), start=1):
-        label = f"#{i} {str(item.get('title'))[:24] or '(无标题)'}"
-        if not item.get("evidence_urls"):
-            problems.append(f"{label}: 无出处(evidence_urls 空)——先审后发要求每条可溯源")
-        if not str(item.get("title") or "").strip():
-            problems.append(f"#{i}: 标题为空")
-        if not item.get("dimension"):
-            problems.append(f"#{i} {label}: 缺观察维度")
-        if not item.get("severity"):
-            problems.append(f"{label}: 未分级(缺 severity)——Analyst 未给出威胁判定")
-        if not item.get("reasons"):
-            problems.append(f"{label}: 无威胁判定理由(reasons 空)——分级不可解释")
+    problems = Reviewer().review(
+        draft,
+        cards=state.get("cards"),          # 本期采集卡 → 编造 URL 拦截的证据索引
+        changes=state.get("changes"),      # 本期 diff 变更事件 → 凭空 fp 拦截的回溯锚
+        unchanged_fps=state.get("unchanged_fps"),
+    )
+    reasons = [p.detail for p in problems]                       # 人话文案（保留原中文定位词）
+    typed = [p.as_dict() for p in problems]                      # 结构化问题（机器可判）
+    trust = [p for p in problems if p.code in TRUST_CODES]
+    structural = [p for p in problems if p.code in STRUCTURAL_CODES]
 
     attempts = int(state.get("rewrites", 0))
     if not problems:
-        verdict, reasons, rewrites = "PASS", [], attempts
+        verdict, attempts = "PASS", attempts
+    elif trust:
+        # 信任问题：改不了（改写一个没出处的结论 = 编造）→ 直转人工，不消耗改写额度
+        verdict = "human"
     elif attempts < ctx.review_max_rewrites:
-        verdict, rewrites = "REWRITE", attempts + 1
-        reasons = problems
+        verdict, attempts = "REWRITE", attempts + 1
     else:
-        verdict, rewrites = "human", attempts  # 额度用尽 → 低置信转人工收件箱（不自动放行）
-        reasons = problems
+        verdict = "human"  # 结构缺口额度用尽 → 低置信转人工收件箱（不自动放行）
 
-    return {"gate": {"verdict": verdict, "reasons": reasons, "attempts": rewrites}, "rewrites": rewrites}
+    # 打回/判定审计迹：每次门卫判定都记一条（PASS 也记，README2 §5.8 "打回有 trace"）
+    gate_trace = list(state.get("gate_trace") or []) + [{
+        "attempt": attempts, "verdict": verdict,
+        "problems": typed, "reasons": reasons,
+    }]
+
+    # 转人工 → 问题条目落人工收件箱（人工确认才放行）
+    human_inbox = list(state.get("human_inbox") or [])
+    if verdict == "human":
+        targets = trust or structural
+        for p in targets:
+            human_inbox.append({
+                "competitor_id": state.get("competitor_id"),
+                "period": state.get("period"),
+                "item_index": p.item_index,
+                "fp": p.fp,
+                "code": p.code,
+                "detail": p.detail,
+                "attempts": attempts,
+            })
+
+    return {
+        "gate": {"verdict": verdict, "reasons": reasons,
+                 "attempts": attempts, "problems": typed},
+        "rewrites": attempts,
+        "gate_trace": gate_trace,
+        "human_inbox": human_inbox,
+    }

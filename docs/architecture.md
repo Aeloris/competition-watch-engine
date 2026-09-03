@@ -4,11 +4,13 @@
 > Phase 2 = 采集层 Researchers（并发采 3 类信源 → 归一化 FactCard，单源失败隔离）；
 > Phase 3 = Dedupe 去重合并 + Memory/Diff 跨期 diff（FactCards → Events → 与上期快照比 → 变更事件 + 写档）；
 > Phase 4 = LangGraph 编排状态机把 P1–P3 串成周期流水线（Planner→Researchers→Dedupe/Diff→Analyst→Writer→Reviewer，全 mock）；
-> Phase 5 = 把 analyst（威胁分级 rubric high/medium/low + 理由链）与 writer（WeeklyReport schema 强制合规）做实，图一条边不改。
+> Phase 5 = 把 analyst（威胁分级 rubric high/medium/low + 理由链）与 writer（WeeklyReport schema 强制合规）做实，图一条边不改；
+> Phase 6 = 把 reviewer 从"结构门卫"做实为"审稿门卫"（grounding 闭环自证 + 显式反义极性矛盾 + 与上期重复 +
+> 打回限次 + 人工收件箱 + gate_trace 审计迹），评审逻辑拆进 reviewer 包，图仍一条边不改。
 > 本文先落两张与设计稿一致的 Mermaid（见 `README2.md` §4.1/§4.2），再给"今天真实能跑的部分 / 未来挂载点"对照，
 > 避免 README 只画将来、落地只有壳。数据模型细节见 [`docs/schema.md`](schema.md)，采集层细节见 [`docs/collectors.md`](collectors.md)，
 > 去重与跨期 diff 细节见 [`docs/memory.md`](memory.md)，编排状态机细节见 [`docs/orchestrator.md`](orchestrator.md)，
-> Analyst 分级 + Writer 周报细节见 [`docs/analyst_writer.md`](analyst_writer.md)。
+> Analyst 分级 + Writer 周报细节见 [`docs/analyst_writer.md`](analyst_writer.md)，Reviewer 审稿门卫细节见 [`docs/reviewer.md`](reviewer.md)。
 
 ---
 
@@ -78,7 +80,7 @@ flowchart LR
 
 ---
 
-## 3. 落地现状对照表（截至 Phase 5：哪些"今天就能跑"，哪些是占位）
+## 3. 落地现状对照表（截至 Phase 6：哪些"今天就能跑"，哪些是占位）
 
 | 层 | 设计稿节点 | Phase 0 状态 | 落地位置 |
 |---|---|---|---|
@@ -97,9 +99,9 @@ flowchart LR
 | 核心业务层 | Memory/Diff 跨期 diff | ✅ Phase 3 fp 认人 + digest 认内容 → add/change/remove/unchanged | `memory/diff.py`（build_snapshot/diff_event_sets/mark_removed）+ `docs/memory.md` |
 | 核心业务层 | Analyst 威胁分级 | ✅ Phase 5 规则阶梯 high/medium/low + 理由链（确定性/可解释/只读维度不改 fp） | `analyst/{rubric,classifier}.py` + `docs/analyst_writer.md` |
 | 核心业务层 | Writer 模板化周报 | ✅ Phase 5 WeeklyReport schema 自校验（headline/雷达/kind/sources；只组装不发挥） | `writer/{report,service}.py` + `docs/analyst_writer.md` |
-| 核心业务层 | Reviewer 质量门卫 | 🟡 结构性门卫（每条必带出处/标题/维度 + P5 已分级带理由）→ P6 语义 grounding/矛盾/合规 | `orchestration/nodes.py`（reviewer_node）+ `docs/orchestrator.md` |
+| 核心业务层 | Reviewer 质量门卫 | ✅ Phase 6 审稿门卫：grounding 闭环自证（URL/fp/命中词）+ 显式反义极性矛盾 + 与上期重复；typed problems，结构性缺口 REWRITE 限次、信任类问题直转人工收件箱（gate_trace 审计迹） | `reviewer/{gate,problems}.py` + `orchestration/nodes.py`（reviewer_node 路由）+ `docs/reviewer.md` |
 | 核心业务层 | Reporter/Alert / Eval | ⬜ 占位 | `orchestration/reporter`（占位包，P7）；`eval/harness.py`（占位类，P8） |
-| 核心业务层 | LangGraph 状态机 | ✅ Phase 4–5（analyst/writer 做实，图一条边不改） | `orchestration/{state,planner,nodes,graph,pipeline}.py` + `docs/orchestrator.md` |
+| 核心业务层 | LangGraph 状态机 | ✅ Phase 4–6（analyst/writer P5、reviewer P6 做实，图一条边不改） | `orchestration/{state,planner,nodes,graph,pipeline}.py` + `docs/orchestrator.md` |
 
 > 图里 P1–P8 的灰块是**目标态**；上表第二列标了它们此刻对应哪个 Phase。交付口径：
 > Phase 1 交付 = 三类对象 schema 定全、JSON/SQLite 可存可取（幂等覆盖）、mock 语料可切 W34/W35 两期快照
@@ -115,9 +117,16 @@ flowchart LR
 > 变更事件打 high/medium/low + 理由链（确定性可解释，只读维度不改 fp）；writer 把已分级条目组装成 WeeklyReport
 > （pydantic 自校验 headline/雷达/kind/sources，只组装不发挥）；reviewer 补查"已分级带理由"。图一条边不改，
 > 全 mock 下 110 测试全绿（编排 17 条）——`demo_two_weeks()` 直接打印威胁雷达，radar 之和 == diff K。
+> Phase 6 交付 = **Reviewer 审稿门卫**：reviewer 从编排内联拆成真包（`reviewer/{gate,problems}.py`），把"结构门卫"
+> 做实成三条语义判定里能确定性的部分——grounding **闭环自证**（evidence_url 必在本期采集卡、fp 必在本期 diff
+> 变更集、理由命中词必在正文 → 编造 URL / 凭空 fp / 张冠李戴各拦截）+ 显式反义极性矛盾（同轴反词 + 共享主体锚 →
+> 转人工不自动二选一）+ 与上期重复防御。typed problems（带 code）进 gate / gate_trace（打回有 trace）/
+> human_inbox（人工收件箱）；路由铁律：结构缺口 REWRITE 限次（review_max_rewrites=2）、信任类问题直转 human
+> 不消耗额度。图仍一条边不改，全 mock 下 123 测试全绿（reviewer gate 13 条）——注入 6 类假事件全拦（6/6）、
+> 真实 W35 语料 0 误拦。
 > ——**不宣称已连真实网络 / 已产出 LLM 情报 / 已能语义判同**：真实 adapter 与跨竞品 fan-out 在接入期；
-> LLM 语义补分级（异词同威胁）在规则之后加一层；Reviewer 语义 grounding / 矛盾 / 合规是 Phase 6；
-> 语义近并（embedding/Qdrant）后置占位（近原文去重仍走确定性规则，见 docs/memory.md 边界表）。
+> LLM 语义补分级（异词同威胁）与 Reviewer 的"读原文语义 grounding"都在规则/自证之后加一层（provider-gated，
+> 本期未接）；语义近并（embedding/Qdrant）后置占位（近原文去重仍走确定性规则，见 docs/memory.md 边界表）。
 
 ## 4. 目录骨架
 
@@ -139,20 +148,22 @@ competition-watch-engine/
 │  └─ __init__.py          # 导出 build_collectors/collect_competitor/collect_all/CollectSummary 等
 ├─ dedupe/                 # Phase 3：classify(维度规则分类,fp 定锚前置) / merge(版本锚+近原文聚类→Events)
 │  └─ __init__.py          # 导出 classify_dimension/version_anchor/merge_to_events/read_competitor_aliases
-├─ orchestration/          # Phase 4–5：state(共享可序列化 State) / planner(周期换算: since/run_id)
-│  │                       #          / nodes(七节点; analyst·writer P5 做实, reviewer 结构性门卫)
+├─ orchestration/          # Phase 4–6：state(共享可序列化 State + gate_trace/human_inbox) / planner(周期换算)
+│  │                       #          / nodes(七节点; analyst·writer P5、reviewer_node P6 路由做实)
 │  │                       #          / graph(StateGraph+MemorySaver+门卫条件边) / pipeline(run_cycle/demo_two_weeks)
 │  └─ __init__.py          # 导出 Planner/PeriodRunState/build_graph/run_cycle/demo_two_weeks
 ├─ analyst/                # Phase 5：rubric(规则阶梯: 先命中先定级 + 理由链) / classifier(Analyst.grade → write_items)
 ├─ writer/                 # Phase 5：report(WeeklyReport/ReportItem 模型自校验) / service(Writer.build 只组装不发挥)
-├─ reviewer/ reporter/ eval/   # reviewer 结构性门卫仍在 orchestration/nodes.py 内；P6/P7/P8 按计划拆实
+├─ reviewer/               # Phase 6：gate(Reviewer.review → typed problems: grounding/矛盾/合规) / problems(代码+路由表)
+├─ reporter/ eval/         # 占位包（P7 Reporter/Alert、P8 Eval 回放评测）
 ├─ docs/architecture.md    # 本文
 ├─ docs/schema.md          # 数据模型与持久化（Phase 1）
 ├─ docs/collectors.md      # 采集层设计：并发/隔离/计数说明（Phase 2）
 ├─ docs/memory.md          # 去重合并与跨期 diff（Phase 3）
 ├─ docs/orchestrator.md    # 编排状态机（Phase 4）
 ├─ docs/analyst_writer.md  # Analyst 威胁分级 + Writer 模板化周报（Phase 5）
-└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph/analyst_rubric/writer_report
+├─ docs/reviewer.md        # Reviewer 审稿门卫（Phase 6）
+└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph/analyst_rubric/writer_report/reviewer_gate
 ```
 `data/memory/`（运行产物，gitignored）：json 后端 = `fact_cards|snapshots/{竞品}/{period}.json`；sqlite = `memory.db`。
 
@@ -168,13 +179,14 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph）
-uv run pytest                # 全绿（Phase 5 = 110）
+uv run pytest                # 全绿（Phase 6 = 123）
 uv run uvicorn app.main:app --port 8000   # 启动后访问 /health
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
 # 去重 + 跨期 diff 验证：见 docs/memory.md §6（dedupe W35 5→3，diff adds=3）
-# 编排验证：见 docs/orchestrator.md §7（demo_two_weeks 回放：trace 2→2→2 / 5→3→3，gate 全 PASS）
+# 编排验证：见 docs/orchestrator.md §7（demo_two_weeks 回放：trace 2→2→2 / 5→3→3，gate 全 PASS + 审计字段）
 # 分级 + 周报验证：见 docs/analyst_writer.md §7（threat_radar 之和 == diff K：crm {1,1,1} / bi {1,1,2}）
+# 门卫验证：见 docs/reviewer.md §8（注入 6 类假事件全拦 6/6、真实 W35 0 误拦；打回有 trace）
 ```
 
 ---
@@ -184,3 +196,4 @@ _更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 
 2026-09-03 更新（Phase 3：Dedupe + Memory/Diff 行 ✅、目录骨架加 dedupe 模块与 memory/diff.py、docs/memory.md、交付口径补 Phase 3）；
 2026-09-03 更新（Phase 4：LangGraph 状态机行 ✅、薄节点行 🟡、Qdrant 行改后置、目录骨架加 orchestration 模块、docs/orchestrator.md、交付口径补 Phase 4）。
 2026-09-03 更新（Phase 5：Analyst/Writer 行 ✅ 拆出、Reviewer 行 🟡、目录骨架加 analyst/writer 模块与 docs/analyst_writer.md、交付口径补 Phase 5）。
+2026-09-04 更新（Phase 6：Reviewer 行 ✅ 拆成 reviewer 包、LangGraph 行 4–6、目录骨架加 reviewer 模块与 docs/reviewer.md、pytest 110→123、交付口径补 Phase 6）。

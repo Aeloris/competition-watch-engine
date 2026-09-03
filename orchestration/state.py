@@ -10,6 +10,8 @@ LangGraph 心智模型：节点 = 函数 (state) -> 部分更新；边决定谁�
 - 计划/周期：run_id / competitor_id / period / since / fetched_at / plan
 - 流水线产物：collect_summary / cards / events / changes / diff_summary / removed_fps / unchanged_fps
 - 分析写作与门卫：write_items（analyst 投影） / draft（writer 初稿） / gate（reviewer 判定）
+- 门卫审计（Phase 6）：gate_trace（每次门卫判定逐次追加 = 打回有 trace） /
+  human_inbox（转人工收件箱 = 低置信/信任问题落箱，人工确认才放行）
 - 旁路计数：rewrites（已打回改写次数） / trace（采集N → 去重M → diff出K）
 """
 from __future__ import annotations
@@ -38,8 +40,10 @@ class PeriodRunState(TypedDict, total=False):
     # —— 分析 / 写作 / 门卫 ——
     write_items: list[dict]         # analyst 投影："本周值得写"的变更（P5 rubric 已分级：severity + reasons[]）
     draft: dict                     # writer 初稿：周报结构（headline + sections + items）
-    gate: dict                      # reviewer 判定：{verdict: PASS|REWRITE|human, reasons[], attempts}
+    gate: dict                      # reviewer 判定：{verdict: PASS|REWRITE|human, reasons[], attempts, problems[]}
     rewrites: int                   # 已打回 Writer 改写次数（条件边的计数器，≤ review_max_rewrites）
+    gate_trace: list[dict]          # P6：门卫判定审计迹，逐次追加 {attempt, verdict, problems[]}（打回有 trace）
+    human_inbox: list[dict]         # P6：人工收件箱，{competitor/period/item_index/fp/code/detail}（转人工落箱）
 
     # —— 旁路计数 ——
     trace: dict                     # {collected: N, merged: M, diff: K}（README2 §5.10 计数链）
