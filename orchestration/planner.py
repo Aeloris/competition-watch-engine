@@ -33,7 +33,7 @@ def period_end_exclusive(period: str) -> date:
 
 
 def default_fetched_at(period: str) -> datetime:
-    """稳定默认抓取时间 = 周期结束后的周一 09:00（对齐 config.schedule.cron '0 9 * * 1'）。"""
+    """稳定默认抓取时间 = 周期结束后的周一 09:00（对齐 config.schedule.cron '0 9 * * mon'）。"""
     return datetime.combine(period_end_exclusive(period), time(hour=9))
 
 

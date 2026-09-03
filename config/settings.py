@@ -69,8 +69,13 @@ class SourcesConfig(BaseModel):
 
 
 class ScheduleConfig(BaseModel):
-    cron: str = "0 9 * * 1"
-    alert_on_high_threat: bool = True
+    enabled: bool = False            # true = uvicorn 启动时自动注册每周巡检
+    cron: str = "0 9 * * mon"    # 每周一 09:00 生成上周周报（day-of-week 用名字免 APScheduler 数值歧义）
+    alert_on_high_threat: bool = True  # 高威胁事件不等周报、即时告警
+
+
+class AlertConfig(BaseModel):
+    webhook_url: str = ""            # 空 = MockNotifier 落台账离线可查；非空 = WebhookNotifier 壳
 
 
 class PipelineConfig(BaseModel):
@@ -90,6 +95,7 @@ class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     sources: SourcesConfig = Field(default_factory=SourcesConfig)
     schedule: ScheduleConfig = Field(default_factory=ScheduleConfig)
+    alerts: AlertConfig = Field(default_factory=AlertConfig)
     pipeline: PipelineConfig = Field(default_factory=PipelineConfig)
     vector_db: VectorDBConfig = Field(default_factory=VectorDBConfig)
 

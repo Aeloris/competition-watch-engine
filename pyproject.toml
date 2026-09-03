@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "竞观 Agent：把散落官网/新闻/RSS 的竞品信号，加工成带出处、先审后发、能回答“本周变了什么”的多 Agent 情报流水线"
 requires-python = ">=3.11,<3.13"
 dependencies = [
+    "apscheduler>=3.11.3",
     "fastapi>=0.141.1",
     "langgraph>=1.2.11",
     "pydantic>=2.13.5",

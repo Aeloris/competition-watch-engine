@@ -22,10 +22,16 @@ sources:
   max_retries: 2                    # 单源失败重试（退避后仍失败→隔离标注，不中断全局）
   enabled: [website, news, rss]     # 本轮启用的信源类型（官方源默认全 mock）
 
-# ============ 调度（Phase 7 APScheduler 用，先占位）============
+# ============ 调度（Phase 7 APScheduler 用）============
 schedule:
-  cron: "0 9 * * 1"          # 每周一 09:00 生成周报
+  enabled: false             # true = uvicorn 启动时自动注册每周巡检（单进程长跑服务定位）
+  cron: "0 9 * * mon"       # 每周一 09:00 生成上周周报；day-of-week 用名字（APScheduler 数值 0=周一，
+                            #   与标准 cron 1=周一不同，用名字免歧义）
   alert_on_high_threat: true # 高威胁事件不等周报、即时告警
+
+# ============ 告警（Phase 7 Notifier 用；webhook_url 留空 = Mock 台账离线可查）============
+alerts:
+  webhook_url: ""            # 非空则用 WebhookNotifier 壳（真 HTTP 推送占位，README 写可对接企微/飞书/邮件）
 
 # ============ 流水线（Phase 4-7 用，先占位）============
 pipeline:
