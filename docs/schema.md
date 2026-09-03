@@ -62,8 +62,10 @@ event_fingerprint("crm_alpha","feature","Alpha CRM v12.0 正式发布：智能�
   无版本锚的卡只在近原文（别名剔除后相同/几乎包含）时才并。
 - **第二层 fp 定锚**（并完给规范事件上户口）= 事件取**最早发布卡**的标题当 canonical title，`event_fingerprint`
   在**规范标题 + 已冻结的 dimension** 上算 → fp 首次去重即定锚、**之后不再变**。
-- **为什么 dimension 必须先定**：dimension 混进 fp，Phase 5 若再分类就会改 fp、把一件事 diff 成"消失+新增"，
-  所以 Phase 3 用**确定性规则分类**（`dedupe/classify.py`）先冻结；Phase 5 Analyst 的改良只改 `dimension` 注解、不改 fp。
+- **为什么 dimension 必须先定**：dimension 混进 fp，之后再分类就会改 fp、把一件事 diff 成"消失+新增"，
+  所以 Phase 3 用**确定性规则分类**（`dedupe/classify.py`）先冻结。Phase 5 Analyst 只**读** `dimension` 做威胁分级
+  （填 `severity` + 理由，`analyst/rubric.py`），绝不改写 dimension/fp/kind —— 分级校验测试锁死
+  （`tests/test_analyst_rubric.py::test_grade_never_rewrites_dimension_fp_kind`）。
 
 > Phase 3 diff 用的"规范化标题"取 **Event 合并后的规范标题**（第一层聚类输出），所以 fp 是 diff 的锚不矛盾。
 > 语义聚类只做到"版本锚/近原文"，embedding 级语义近并（Qdrant）如实留到 Phase 4——本节口径与 docs/memory.md §4 一致。
@@ -117,7 +119,7 @@ fixtures 两竞品 × website/news/rss，时间戳 `2026-08-17..08-30`，按原�
 ## 7. 运行与验证
 
 ```bash
-uv run pytest                        # 81 passed（Phase1 26 → …collectors/dedupe/diff/orchestration_graph 累计，Phase 4 = 81）
+uv run pytest                        # 110 passed（Phase1 26 → …累计到 Phase 5 = 110：采集/去重/diff/编排/分级/周报）
 # 手工看语料分区：
 uv run python -c "from datetime import datetime; from config.settings import get_settings; from memory import build_period_cards; \
 print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / 'sources', 'crm_alpha', datetime(2026,8,31,9,0)).items()})"
@@ -139,3 +141,5 @@ print({p: len(c) for p, c in build_period_cards(get_settings().fixtures_path / '
 
 _更新日志_：2026-09-03 建（Phase 1 交付）；2026-09-03 更新（Phase 3：Event 产出实例、Snapshot.event_digests、新增 §5 diff 数据视角、口径与局限刷新）；
 2026-09-03 更新（Phase 4：头注补运行 State、§7 pytest 67→81、局限刷新：Qdrant 后置、Event 仍无独立持久化）。
+2026-09-03 更新（Phase 5：§3 口径改过去时——Analyst 只读 dimension 分级填 severity，绝不改 dimension/fp/kind，附锁死测试名）。
+

@@ -26,16 +26,17 @@ flowchart LR
 
 ## 2. 三个核心概念 & 为什么
 
-1. **维度为什么要 Phase 3 就先定（不等 Phase 5 Analyst）**
-   `Event.dimension` 必填，且 `fp = sha1(竞品|维度|规范化标题)` 把维度混进了身份。等 Phase 5 再分类 →
-   事件换维度 = fp 变 = 同一件事被 diff 成"消失 + 新增"。所以先用确定性关键词规则占位
-   （`dedupe/classify.py`，README2 §5.6 本来就说"规则先命中，LLM 补语义"）；**fp 首次去重即定锚、冻结**，
-   Phase 5 改良分类只改 `dimension` 注解、不改 `fp`。
+1. **维度为什么要 Phase 3 就先定（不让后续 Phase 再分类）**
+   `Event.dimension` 必填，且 `fp = sha1(竞品|维度|规范化标题)` 把维度混进了身份。若之后（如 Analyst 层）再分类 →
+   事件换维度 = fp 变 = 同一件事被 diff 成"消失 + 新增"。所以 Phase 3 用确定性关键词规则（`dedupe/classify.py`，
+   README2 §5.6 口径"规则先命中，LLM 补语义"）**首次去重即定锚、冻结**。Phase 5 Analyst 只**读** `dimension`
+   做威胁分级（填 severity + 理由，`analyst/rubric.py`），维度/fp/kind 一律不改（锁死测试见
+   `tests/test_analyst_rubric.py::test_grade_never_rewrites_dimension_fp_kind`）。
 2. **去重两层，本阶段落地"版本锚 + 近原文"，语义半层如实留 Phase 4**
    - 发布/上线类事件：**版本锚**（v12.0 / 3.0 / v12.1，正则 `\d+(\.\d+)+`）≈ 事件身份证——fixtures 里
      v12.0 的官网/changelog/媒体三源**措辞各不相同**仍并一条、`evidence_urls=3`；图表库 3.0 双源并入一。
    - 无版本锚的卡只并**近原文重复**（别名剔除后标题相同或几乎包含）。
-   - **异词异义的语义近并（embedding）本阶段不实现、不硬凑**——那是 Phase 4 接 Qdrant 语义的活，
+   - **异词异义的语义近并（embedding）不实现、不硬凑**——Qdrant 语义聚类后置占位（P4 编排、P5 分级都未引入），
      docs/schema.md §3 承诺的边界照旧。
 3. **diff 怎么判"变没变"：fp 认人，digest 认内容**
    只看 fp 集合只能判 add/remove/skip，判不了 change → Snapshot 扩展 `event_digests`（fp → 内容摘要 =
@@ -81,4 +82,4 @@ exec('def m():\n s=get_settings(); a=read_competitor_aliases(s.fixtures_path/\"s
 
 ---
 
-_更新日志_：2026-09-03 建（Phase 3 交付）。
+_更新日志_：2026-09-03 建（Phase 3 交付）；2026-09-03 更新（Phase 5：§2 维度口径改过去时——Analyst 只读 dimension 分级、绝不改 dimension/fp/kind；Qdrant 语义近并口径后置）。

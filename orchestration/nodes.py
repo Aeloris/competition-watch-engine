@@ -4,14 +4,14 @@
 节点契约 = LangGraph 约定：`(state: dict) -> dict`（返回的部分更新按 key 覆盖进共享 State）。
 每个节点只读自己需要的 key、只写自己的 key —— 这就是"节点边界"的工程含义。
 
-P4 的诚实分层（README2 §7.4 阶段 4 = 打通编排，5/6 = 分析师/门卫做实）：
+Phase 演进：P4 打通编排（图跑得通、测得死）；P5 把两个薄节点做实、图一条边不改：
 - **plan / researchers / dedupe_diff 是真节点**：分别复用 orchestration.Planner、
   collectors（并发采 + 失败隔离 + fetched_at 确定性）与 dedupe + memory.diff（去重 + 跨期 diff + 写快照）；
-- **analyst / writer / reviewer 是"结构真、逻辑薄"的节点**：
-    analyst   → 投影"本周值得写"的变更清单（severity=None 占位，P5 rubric 才分级）；
-    writer    → 排成周报初稿结构（P5 才做威胁雷达/对比表）；
-    reviewer  → 结构性门卫（每条必带出处 + 必填齐全；语义 grounding / 矛盾检测是 P6）。
-  这样图（Phase 4 主菜）跑得通、测得死，又没越界假装 P5/P6 已做。
+- **analyst（P5 做实）** → 用 rubric 给每个变更事件打 high/medium/low + 理由链
+  （确定性、可解释；只读 dimension、不改 fp；LLM 补语义等真 provider 再接）；
+- **writer（P5 做实）** → 把已分级条目组装成 WeeklyReport（pydantic schema 强制合规：
+  每条必有 severity/reasons/出处；威胁雷达与 kind 计数自洽），只组装、绝不补充常识；
+- **reviewer 仍是结构性门卫**（每条必带出处/标题/维度 + 已分级带理由；语义 grounding / 矛盾检测是 P6）。
 
 数据流里的 pydantic 只在节点内部出现；写进共享 State 的永远是 JSON-safe 的 dict/list，
 保证"共享 State 可序列化"字面成立（最终可直接落盘 / checkpoint）。
@@ -22,6 +22,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import datetime
 
+from analyst import Analyst
 from collectors import build_collectors, collect_competitor
 from dedupe import merge_to_events, read_competitor_aliases
 from memory import (
@@ -39,6 +40,7 @@ from orchestration.planner import (
     period_end_exclusive,
     period_start,
 )
+from writer import Writer
 
 
 @dataclass
@@ -139,51 +141,40 @@ def dedupe_diff_node(state: dict, ctx: NodeContext) -> dict:
     }
 
 
-# ---------------------------------------------------------------- analyst（薄）
+# ---------------------------------------------------------------- analyst（P5 做实）
 def analyst_node(state: dict, ctx: NodeContext) -> dict:
-    """投影"本周值得写"的变更清单：drop unchanged，severity 置 None（P5 rubric 填）。
+    """对"本周值得写"的变更事件做威胁分级（rubric：high/medium/low + 理由链）。
 
-    不做威胁分级/归因 —— P4 的 analyst 只负责"选哪些进周报 + 打占位"，把 P5 的地盘留干净。
+    只消费 diff 出的 changes（adds+changes，unchanged 已 drop）；只读 dimension、不改 fp。
+    确定性：同事件永远同分级 → 同语料重跑，周报每条 severity 稳定（测试锁死）。
     """
-    write_items: list[dict] = []
-    for e in state.get("changes", []):
-        write_items.append(
-            {
-                "fp": e.get("fp"),
-                "kind": e.get("kind"),
-                "dimension": e.get("dimension"),
-                "severity": None,  # P5 Analyst rubric 填；P4 诚实占位
-                "title": e.get("title"),
-                "summary": e.get("summary"),
-                "evidence_urls": e.get("evidence_urls"),
-            }
-        )
+    events = [Event.model_validate(e) for e in state.get("changes", [])]
+    write_items = Analyst().grade(events)  # JSON-safe dicts：severity=high/medium/low + reasons[]
     return {"write_items": write_items}
 
 
-# ---------------------------------------------------------------- writer（薄）
+# ---------------------------------------------------------------- writer（P5 做实）
 def writer_node(state: dict, ctx: NodeContext) -> dict:
-    """把待写清单排成周报初稿结构：headline + sections + items（P5 才做威胁雷达/对比表）。"""
+    """把已分级条目组装成合规周报（WeeklyReport schema 强制；只组装、不补充常识）。"""
     diff = state.get("diff_summary", {})
-    draft = {
-        "run_id": state.get("run_id"),
-        "competitor_id": state["competitor_id"],
-        "period": state["period"],
-        "generated_at": state.get("fetched_at"),
-        "headline_count": len(state.get("write_items", [])),  # 本周变更条数 = diff.total(K)
-        "sections": {
+    report = Writer().build(
+        run_id=state.get("run_id"),
+        competitor_id=state["competitor_id"],
+        period=state["period"],
+        generated_at=state.get("fetched_at"),
+        sections={
             "adds": diff.get("adds", 0),
             "changes": diff.get("changes", 0),
             "removes": diff.get("removes", 0),
         },
-        "items": state.get("write_items", []),  # 每条带 evidence_urls → 可溯源
-    }
-    return {"draft": draft}
+        items=state.get("write_items", []),
+    )
+    return {"draft": report.model_dump(mode="json")}
 
 
 # ---------------------------------------------------------------- reviewer（结构性门卫，薄）
 def reviewer_node(state: dict, ctx: NodeContext) -> dict:
-    """结构性门卫：周报每条必须有出处、必填齐全。
+    """结构性门卫：周报每条必须有出处、必填齐全 + P5 已分级带理由。
 
     有缺口 → verdict=REWRITE（还有改写额度）或 human（额度用尽 → 低置信转人工）；
     无缺口 → PASS。语义 grounding（原文是否真支撑结论）与矛盾检测属 P6 —— 这里只做结构完整性。
@@ -198,6 +189,10 @@ def reviewer_node(state: dict, ctx: NodeContext) -> dict:
             problems.append(f"#{i}: 标题为空")
         if not item.get("dimension"):
             problems.append(f"#{i} {label}: 缺观察维度")
+        if not item.get("severity"):
+            problems.append(f"{label}: 未分级(缺 severity)——Analyst 未给出威胁判定")
+        if not item.get("reasons"):
+            problems.append(f"{label}: 无威胁判定理由(reasons 空)——分级不可解释")
 
     attempts = int(state.get("rewrites", 0))
     if not problems:

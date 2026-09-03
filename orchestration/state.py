@@ -36,7 +36,7 @@ class PeriodRunState(TypedDict, total=False):
     unchanged_fps: list[str]        # 与上期相同 → 零重复计算（不下发）
 
     # —— 分析 / 写作 / 门卫 ——
-    write_items: list[dict]         # analyst 投影："本周值得写"的变更（severity=None 占位，P5 rubric 填）
+    write_items: list[dict]         # analyst 投影："本周值得写"的变更（P5 rubric 已分级：severity + reasons[]）
     draft: dict                     # writer 初稿：周报结构（headline + sections + items）
     gate: dict                      # reviewer 判定：{verdict: PASS|REWRITE|human, reasons[], attempts}
     rewrites: int                   # 已打回 Writer 改写次数（条件边的计数器，≤ review_max_rewrites）

@@ -66,11 +66,14 @@ def demo_two_weeks(settings: Settings | None = None, *, store: MemoryStore | Non
             final = run_cycle(settings, comp, period, store=store, persist=True)
             results.append(final)
             trace, gate = final.get("trace", {}), (final.get("gate") or {})
+            draft = final.get("draft", {})
+            radar = draft.get("threat_radar", {})
             print(
                 f"{comp} {period}: "
                 f"trace(collected={trace.get('collected')} → merged={trace.get('merged')} "
                 f"→ diff={trace.get('diff')}) · "
-                f"draft.sections={final.get('draft', {}).get('sections')} · "
+                f"draft.sections={draft.get('sections')} · "
+                f"threat_radar={radar} · "
                 f"gate={gate.get('verdict')}"
             )
     return results

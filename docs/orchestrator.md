@@ -1,9 +1,11 @@
-# 编排状态机 Orchestration（Phase 4）
+# 编排状态机 Orchestration（Phase 4–5）
 
 > 交付沿革：Phase 1 = 数据模型 + 双后端持久化；Phase 2 = 采集层 Researchers（并发 + 单源失败隔离）；
 > Phase 3 = Dedupe 去重合并 + Memory/Diff 跨期 diff。Phase 4 = **用 LangGraph 把 P1–P3 串成一条可跑的周期流水线**：
 > `Planner → Researchers(并行) → Dedupe/Diff → Analyst → Writer → Reviewer`，一条命令出「周报初稿 + 门卫判定」。
-> 本文先讲"为什么选状态机"，再给节点契约 / 共享 State / 门卫条件边 / 真值 trace，最后给局限。
+> Phase 5 = **把 analyst（rubric 分级）+ writer（WeeklyReport schema 合规）做实**，图一条边不改，`demo_two_weeks()`
+> 直接打印威胁雷达。本文先讲"为什么选状态机"，再给节点契约 / 共享 State / 门卫条件边 / 真值 trace，最后给局限。
+> 分级与周报口径的细节在 [`docs/analyst_writer.md`](analyst_writer.md)。
 
 ---
 
@@ -11,21 +13,22 @@
 
 ```mermaid
 flowchart LR
-  subgraph NODES["七个节点（真 = 复用 P1–P3 已测库；薄 = 结构真、逻辑留给 P5/P6）"]
+  subgraph NODES["七个节点（真 = 复用已测库；P5 已把 analyst/writer 做实）"]
     PL["planner<br/>采集计划<br/>(since=周期起日)"]
     RS["researchers<br/>并发采 3 类信源<br/>复用 collectors"]
     DD["dedupe_diff<br/>去重合并 + 跨期 diff<br/>+ 写快照(幂等)"]
-    AN["analyst · 薄<br/>投影本周待写清单<br/>severity=None 占位"]
-    WR["writer · 薄<br/>排成周报初稿结构"]
-    RV["reviewer · 薄<br/>结构性门卫:<br/>每条必有出处"]
+    AN["analyst · P5 做实<br/>ThreatRubric 阶梯<br/>severity + reasons[]"]
+    WR["writer · P5 做实<br/>WeeklyReport 组装<br/>headline/雷达自校验"]
+    RV["reviewer · 结构门卫<br/>已分级? 有理由?<br/>每条必有出处"]
   end
   PL --> RS --> DD --> AN --> WR --> RV
   RV -->|"REWRITE 额度内打回"| WR
   RV -->|"PASS / 额度用尽→human"| END["END"]
 ```
 
-LangGraph 是**图运行时、不是 LLM**：六个环节里大多数是纯 Python 节点（复用 P1–P3 已测逻辑），
-只有 P5/P6 才需要在节点内部接 Mock/Qwen LLM —— 因此全 mock 下编排层也能被确定性测死（81 测试含 14 个编排测试）。
+LangGraph 是**图运行时、不是 LLM**：六个环节里大多数是纯 Python 节点（复用已测逻辑），
+P5 的 analyst（确定性规则分级）/ writer（pydantic 组装）仍是纯 Python —— 只有 P6 之后的语义审稿才需要在节点内
+接 Mock/Qwen LLM。因此全 mock 下编排层也能被确定性测死（110 测试含 17 个编排测试）。
 
 ## 2. 为什么用"图状态机"而不是顺序脚本（面试讲这三点）
 
@@ -34,8 +37,8 @@ LangGraph 是**图运行时、不是 LLM**：六个环节里大多数是纯 Pyth
    可 checkpoint 断点续跑、每个 key 谁写谁读一目了然 —— 比 20 个函数手动传参/返回值接龙更不易漏。
 2. **条件边让流程可循环、可中断、可人工介入**：Reviewer 门卫判 `REWRITE` 就沿条件边**回到 Writer 再写一次**，
    额度用尽判 `human`（转人工收件箱）而不是硬放行 —— "先审后发、低置信转人工"在编排层是**图的结构**，不是口头约定。
-3. **节点边界 = 可插桩可替换**：每个节点独立可测；P5/P6 把薄节点内部做实，**图一条边都不用改**（依赖注入 ctx，
-   测试还可 monkeypatch 单节点注入故障/坏输出验证门卫）。
+3. **节点边界 = 可插桩可替换**：每个节点独立可测；P5 已把 analyst/writer 内部做实、P6 将把语义审稿做实，
+   **图一条边都没改**（依赖注入 ctx，测试还可 monkeypatch 单节点注入故障/坏输出验证门卫）。
 
 对应工程可见物：`PeriodRunState` 定义了整条流水线的"数据契约"（新增一个中间产物 = 加一个 key）；
 `route_after_review` 是唯一一条条件边；MemorySaver 按 thread_id(=run_id) 存每轮 checkpoint。
@@ -47,9 +50,9 @@ LangGraph 是**图运行时、不是 LLM**：六个环节里大多数是纯 Pyth
 | planner | competitor_id / period / fetched_at | 算 since=周期起日、run_id、启用信源清单 | plan | 真（`orchestration/planner.py`） |
 | researchers | plan | 每源一个 Worker 并发采（asyncio+信号量），单源失败进 failures 不中断 | collect_summary / cards | 真（复用 `collectors`） |
 | dedupe_diff | cards | 只留落在本周期的卡 → `merge_to_events` → 与上期快照 `diff_event_sets` → 写本期快照（幂等） | events / changes / diff_summary / removed_fps / unchanged_fps / trace | 真（复用 `dedupe` + `memory.diff`） |
-| analyst | changes | drop unchanged，投影"本周待写"清单，severity=None 占位 | write_items | **薄**（P5 rubric 分级） |
-| writer | write_items / diff_summary | 排成周报初稿：headline + sections(adds/changes/removes) + items | draft | **薄**（P5 威胁雷达/对比表） |
-| reviewer | draft / rewrites | 结构性门卫：每条有 evidence_urls + title + dimension；缺口 → REWRITE / human | gate / rewrites | **薄**（P6 grounding/矛盾/合规） |
+| analyst | changes | 用 ThreatRubric 规则阶梯给每条 diff 出的变更事件打 severity(high/medium/low) + reasons[]（确定性；只读 dimension、不改 fp） | write_items | 真（P5，`analyst/{rubric,classifier}.py`） |
+| writer | write_items / diff_summary | 组装合规 WeeklyReport：headline/sections/items + 重算 threat_radar + 出处并集 sources（schema 自校验，只组装不发挥） | draft | 真（P5，`writer/{report,service}.py`） |
+| reviewer | draft / rewrites | 结构性门卫：每条有 evidence_urls + title + dimension + P5 已分级(severity)带理由(reasons)；缺口 → REWRITE / human | gate / rewrites | 薄（P6 grounding/矛盾/合规） |
 
 > 数据流里的 pydantic 只出现在节点内部（转 model 用一下）；写进共享 State 的永远是 JSON-safe dict，
 > 所以"State 可序列化"字面成立 —— `persist=True` 直接把最终 state 落 `data/pipeline/{run_id}.json`。
@@ -64,10 +67,13 @@ LangGraph 是**图运行时、不是 LLM**：六个环节里大多数是纯 Pyth
 
 ## 5. 门卫与条件边：打回额度 / 转人工
 
-Reviewer 不做语义判定（P6 才做 grounding/矛盾/合规），只做**结构性门卫**，三个缺口即打回：
+Reviewer 不做语义判定（P6 才做 grounding/矛盾/合规），只做**结构性门卫**，五个缺口即打回：
 
 1. 条目 `evidence_urls` 为空 → "无出处——先审后发要求每条可溯源"；
-2. 标题为空；3. 缺观察维度 dimension。
+2. 标题为空；
+3. 缺观察维度 dimension；
+4. **未分级**（缺 `severity`）→ "Analyst 未给出威胁判定"（P5 新增）；
+5. **无威胁判定理由**（`reasons` 空）→ "分级不可解释"（P5 新增）。
 
 判定流（`config.pipeline.review_max_rewrites=2`，测试锁死）：
 `rewrites=0` 有缺口 → `REWRITE`（打回 Writer，rewrites=1）→ 仍有缺口 → `REWRITE`（rewrites=2）→ 还有缺口 →
@@ -91,30 +97,35 @@ Reviewer 不做语义判定（P6 才做 grounding/矛盾/合规），只做**结
 
 ```bash
 uv sync                     # 依赖（含 langgraph）
-uv run pytest               # 全绿（Phase 4 = 81，编排新增 14 条）
-uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"   # 两竞品×两期回放，打印 trace+gate
+uv run pytest               # 全绿（Phase 5 = 110，编排 17 条）
+uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"   # 两竞品×两期回放，打印 trace + sections + threat_radar + gate
 uv run python -c "from orchestration import run_cycle; r = run_cycle(persist=True); print(r['gate'])"
 # 最终 state 落 data/pipeline/{run_id}.json（文件即状态 → P7/P8 审计/回放对象）
+# 分级/周报口径细节见 docs/analyst_writer.md
 ```
 
-## 8. 测试（tests/test_orchestration_graph.py，14 条）
+## 8. 测试（tests/test_orchestration_graph.py，17 条）
 
 | 族 | 锁什么 |
 |---|---|
 | 周期换算 | period_start/period_end_exclusive/default_fetched_at（2026-W34=08-17…），非法期 fail fast |
 | 冷启动 / 真 diff / 幂等重跑 | W34 全 add；W35 对上期 5→3→3 且 v12 事件 evidence_urls=3、快照已写档；重跑同周期 diff=0 |
-| 状态机属性 | 最终 state 链 key 齐全且 `trace.diff==len(changes)`；checkpointer 可取回最终判定；两独立底库同输入同结果（确定性）；persist 落盘 |
-| 门卫 + 条件边 | 干净→PASS；缺出处额度内 REWRITE、用尽→human；route REWRITE→writer 其余→END；**注入坏 writer → 打回 2 次 → human** |
+| P5 威胁雷达 | W35 threat_radar 之和 == diff K（crm {1,1,1} / bi {1,1,2}）、headline==K、每条 severity∈三档 + reasons≥1 + 有出处 |
+| 状态机属性 | 最终 state 链 key 齐全且 `trace.diff==len(changes)`；checkpointer 可取回最终判定；两独立底库同输入同结果（确定性，含逐条 severities/radar）；persist 落盘 |
+| 门卫 + 条件边 | 干净→PASS；缺出处 / **未分级(severity)** / **空理由(reasons)** 额度内 REWRITE、用尽→human；route REWRITE→writer 其余→END；**注入坏 writer → 打回 2 次 → human** |
 | 失败隔离在编排层成立 | 单源 boomed 不 raise、failures 记 `rss/crm_alpha`、健康源照常产出（collected 5→3、merged 2）、仍 PASS |
 
 ## 9. 局限与边界（诚实口径）
 
-- **Analyst / Writer / Reviewer 本期是"结构真、逻辑薄"**：威胁分级 rubric、周报威胁雷达/对比表、语义 grounding /
-  矛盾 / 合规检测分别在 **Phase 5 / Phase 6** 做实 —— 图与 State 已铺好挂载点（severity=None 占位、gate 判定已接）。
+- **Analyst / Writer 已在 P5 做实，但口径是确定性的**：rubric 是信号词分级器（"异词同威胁"漏判 → LLM 补语义未来加一层）；
+  Writer 只输出结构化条目 + 雷达 + 出处清单，不做自然语言正文。细节与表格见 [`docs/analyst_writer.md`](analyst_writer.md)。
+- **Reviewer 仍是结构性门卫**：P5 后它多查了"已分级、带理由"，但**不**证明理由真实支撑结论 ——
+  原文 grounding / 矛盾 / 合规检测是 **Phase 6**，别把 P5 说成已审稿。
 - 语义近并（embedding/Qdrant）仍未做：近原文去重仍走确定性规则（见 [`docs/memory.md`](memory.md) 边界表）。
 - 单次 `run_cycle` 若上期无快照 = 冷启动（全 add）；跨期语义必须"先跑过上期写档"才能成立。
-- Reviewer 只做结构完整性（有出处/必填齐全），**不**证明原文支撑结论 —— 那是 P6 的 grounding，别把 P4 说成已审稿。
+- `REWRITE` 条件边是给"下游 bug / 编造入口"兜底的安全网：真实链上 analyst 恒产出分级、writer 只组装，
+  打回只在测试注入坏输出时触发（这正是门卫要抓的）。
 
 ---
 
-_更新日志_：2026-09-03 建（Phase 4 交付）。
+_更新日志_：2026-09-03 建（Phase 4 交付）；2026-09-03 更新（Phase 5：mermaid/节点表标 analyst·writer 做实、门卫缺口 3→5、§6/§7/§8 刷新到 110 测试与威胁雷达、§9 边界重述）。

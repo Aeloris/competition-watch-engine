@@ -1,9 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Phase 4 Orchestration：LangGraph 端到端把 P1–P3 串成一条可跑的周期流水线。
+"""Phase 4–5 Orchestration：LangGraph 端到端把 P1–P3 串成一条可跑的周期流水线。
 
-诚实的验收口径（README2 §7.4 Phase 4 = 打通编排，Analyst/Writer/Reviewer 内部做实属 P5/P6）：
+诚实的验收口径（README2 §7.4：P4 = 打通编排；P5 = 把 analyst/writer 做实、reviewer 仍结构性门卫）：
 - 真节点 = planner / researchers(复用 collectors 并发+失败隔离) / dedupe_diff(去重+跨期 diff+写快照)；
-- 薄节点 = analyst(投影待写清单) / writer(初稿) / reviewer(结构性门卫：每条必有出处、必填齐全)；
+- P5 做实 = analyst(ThreatRubric 打 high/medium/low + 理由链，只读维度不改 fp) /
+  writer(组装合规 WeeklyReport：headline/雷达/kind 计数自校验，只组装不发挥)；
+- reviewer = 结构性门卫（每条必有出处/标题/维度 + 已分级带理由；语义 grounding 属 P6）；
 - 条件边两条都要测到：REWRITE→回 writer（额度内打回改写）与 额度用尽→human（不自动放行）。
 
 真值来源 = P3 fixtures（docs/memory.md）：
@@ -36,13 +38,19 @@ def _store(tmp_path):
 
 
 def _proj(final: dict) -> dict:
-    """确定性投影：剔除 Event.created_at 等时间戳，只看编排语义。"""
+    """确定性投影：剔除 Event.created_at 等时间戳，只看编排语义。
+
+    P5 扩展：纳入每条 severity 序列 + 威胁雷达 → 同语料重跑，分级也必须逐条稳定。
+    """
+    draft = final.get("draft") or {}
     return {
         "trace": final.get("trace"),
         "diff_summary": final.get("diff_summary"),
         "gate": final.get("gate"),
         "changes_fps": sorted(c.get("fp") for c in final.get("changes", [])),
-        "sections": (final.get("draft") or {}).get("sections"),
+        "sections": draft.get("sections"),
+        "severities": tuple(i.get("severity") for i in draft.get("items", [])),
+        "radar": draft.get("threat_radar"),
     }
 
 
@@ -98,6 +106,29 @@ def test_bi_beta_two_weeks_matches_fixtures(tmp_path):
     assert final["trace"] == {"collected": 5, "merged": 4, "diff": 4}  # P3 fixtures 真值：5卡→4事件
 
 
+# ---------- P5：威胁雷达与 diff K 自洽、逐条分级合规 ----------
+
+def test_w35_threat_radar_sums_to_diff_and_every_item_graded(tmp_path):
+    """威胁雷达计数 = diff 出的 K（每条变更都进了雷达）；每条必带分级与理由链。"""
+    expected_radar = {  # fixtures 实测真值（docs/analyst_writer.md 校准表）
+        "crm_alpha": {"high": 1, "medium": 1, "low": 1},
+        "bi_beta": {"high": 1, "medium": 1, "low": 2},
+    }
+    for comp, radar in expected_radar.items():
+        store = _store(tmp_path / comp)
+        run_cycle(SETTINGS, comp, "2026-W34", store=store, run_id="seed")
+        final = run_cycle(SETTINGS, comp, "2026-W35", store=store, run_id="radar")
+        draft = final["draft"]
+        K = final["trace"]["diff"]
+        assert sum(draft["threat_radar"].values()) == K           # 雷达各项相加 = 下发变更数
+        assert draft["threat_radar"] == radar
+        assert draft["headline_count"] == K == len(draft["items"])
+        for it in draft["items"]:
+            assert it["severity"] in {"high", "medium", "low"}     # 全部已分级
+            assert isinstance(it["reasons"], list) and it["reasons"]
+            assert it["evidence_urls"]                             # 全部可溯源
+
+
 # ---------- 状态机属性：完整链 / checkpoint / 确定性 ----------
 
 def test_final_state_has_full_chain(tmp_path):
@@ -145,21 +176,47 @@ def _ctx():
     return SimpleNamespace(review_max_rewrites=2)
 
 
+def _clean_item(title: str = "T", urls=None, severity: str = "medium", reasons=None) -> dict:
+    """P5 合规条目：有出处 + 已分级 + 带理由（reviewer 通过门槛的最低形态）。
+
+    注意：空 list/None 是"故意缺口"，必须原样保留（不能用 `x or 默认`——会把空列表顶成默认值）。
+    """
+    return {"title": title, "evidence_urls": ["https://x/1"] if urls is None else list(urls),
+            "dimension": "feature", "severity": severity,
+            "reasons": ["规则[feature_update]：常规迭代"] if reasons is None else list(reasons)}
+
+
 def test_reviewer_unit_clean_pass(tmp_path):
-    state = {"draft": {"items": [{"title": "T", "evidence_urls": ["https://x/1"], "dimension": "feature"}]},
-             "rewrites": 0}
+    state = {"draft": {"items": [_clean_item()]}, "rewrites": 0}
     out = reviewer_node(state, _ctx())
     assert out["gate"]["verdict"] == "PASS" and out["gate"]["reasons"] == []
 
 
 def test_reviewer_unit_gap_rewrite_then_human(tmp_path):
-    poisoned = {"draft": {"items": [{"title": "无出处", "evidence_urls": [], "dimension": "feature"}]}}
+    poisoned = {"draft": {"items": [_clean_item(title="无出处", urls=[])]}}
     r1 = reviewer_node({**poisoned, "rewrites": 0}, _ctx())
     assert r1["gate"]["verdict"] == "REWRITE" and r1["rewrites"] == 1
     r2 = reviewer_node({**poisoned, "rewrites": 1}, _ctx())
     assert r2["gate"]["verdict"] == "REWRITE" and r2["rewrites"] == 2
     r3 = reviewer_node({**poisoned, "rewrites": 2}, _ctx())
     assert r3["gate"]["verdict"] == "human" and r3["rewrites"] == 2  # 额度用尽 → 转人工不自动放行
+
+
+def test_reviewer_unit_missing_severity_rewrite_then_human(tmp_path):
+    """P5 门卫新增校验：条目未分级（缺 severity）→ 打回；额度用尽 → human 不自动放行。"""
+    ungraded = {"draft": {"items": [_clean_item(severity=None)]}}
+    r1 = reviewer_node({**ungraded, "rewrites": 0}, _ctx())
+    assert r1["gate"]["verdict"] == "REWRITE" and r1["rewrites"] == 1
+    assert any("未分级" in p for p in r1["gate"]["reasons"])
+    r3 = reviewer_node({**ungraded, "rewrites": 2}, _ctx())
+    assert r3["gate"]["verdict"] == "human" and r3["rewrites"] == 2
+
+
+def test_reviewer_unit_missing_reasons_rewrite(tmp_path):
+    ungraded = {"draft": {"items": [_clean_item(reasons=[])]}}  # 显式空理由 = "缺理由"缺口
+    r1 = reviewer_node({**ungraded, "rewrites": 0}, _ctx())
+    assert r1["gate"]["verdict"] == "REWRITE"
+    assert any("reasons 空" in p for p in r1["gate"]["reasons"])
 
 
 def test_route_after_review_maps_conditional_edge():
@@ -169,11 +226,14 @@ def test_route_after_review_maps_conditional_edge():
 
 
 def test_graph_rewrite_loop_ends_human_on_poison(tmp_path, monkeypatch):
-    """注入缺出处的 writer（模拟下游 bug/编造入口）→ 图走 打回≤2次 → human，不硬放行。"""
+    """注入缺出处的 writer（模拟下游 bug/编造入口）→ 图走 打回≤2次 → human，不硬放行。
+
+    其余字段（severity/reasons/dimension）合规，只毒 evidence_urls —— 让门卫精准抓到"无出处"这一个缺口。
+    """
     def poison_writer(state: dict, ctx=None) -> dict:  # 签名对齐 NODE_IMPLS 被 bind 的 (state, ctx)
         return {"draft": {"competitor_id": state["competitor_id"], "period": state["period"],
                           "headline_count": 1, "sections": {"adds": 1, "changes": 0, "removes": 0},
-                          "items": [{"title": "编造动态", "evidence_urls": [], "dimension": "feature"}]}}
+                          "items": [_clean_item(title="编造动态", urls=[])]}}
 
     monkeypatch.setitem(graph_mod.NODE_IMPLS, "writer", poison_writer)
     final = run_cycle(SETTINGS, COMP, "2026-W35", store=_store(tmp_path), run_id="poison")
