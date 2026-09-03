@@ -1,0 +1,57 @@
+{
+  "id": "crm_alpha",
+  "name": "Alpha CRM",
+  "aliases": ["Alpha CRM", "Alpha", "阿尔法CRM"],
+  "note": "Mock 竞品 A：一家 CRM SaaS。items 覆盖 website/news/rss 三类、跨两周 08-17..08-30。v12.0 发布事件故意在 website(官网博客)+news(媒体)+rss(changelog) 三处重复，供 Phase 3 去重指纹（fp=hash(竞品,维度,规范化标题)）验证。",
+  "items": [
+    {
+      "kind": "website",
+      "url": "https://alpha-crm.example.com/blog/api-v2",
+      "published_at": "2026-08-19T10:00:00",
+      "title": "开放平台 API v2 上线：Webhook 事件订阅",
+      "summary": "支持线索/跟进/成交全生命周期事件回调，开发者可自助订阅并写入自有系统。"
+    },
+    {
+      "kind": "rss",
+      "url": "https://alpha-crm.example.com/changelog.rss#excel-import",
+      "published_at": "2026-08-22T15:00:00",
+      "title": "更新：联系人批量导入支持 Excel 多 Sheet",
+      "summary": "批量导入向导支持选择 Sheet 与字段自动映射，单个文件上限提至 5 万行。"
+    },
+    {
+      "kind": "website",
+      "url": "https://alpha-crm.example.com/blog/v12-ga",
+      "published_at": "2026-08-25T08:00:00",
+      "title": "Alpha CRM v12.0 正式发布：智能跟进助手 GA",
+      "summary": "v12.0 面向全部付费版开放智能跟进助手：依据销售动作自动生成下一步建议与跟进文案，全员可用。"
+    },
+    {
+      "kind": "rss",
+      "url": "https://alpha-crm.example.com/changelog.rss#v12-ga",
+      "published_at": "2026-08-25T08:05:00",
+      "title": "【发布】v12.0 智能跟进助手 GA",
+      "summary": "跟进助手结束内测正式发布，详见版本说明。与官网博客同日公告。"
+    },
+    {
+      "kind": "news",
+      "url": "https://techwire.example.com/p/alpha-crm-v12",
+      "published_at": "2026-08-25T11:30:00",
+      "title": "Alpha CRM 发布 v12.0，押注 AI 跟进助手",
+      "summary": "媒体报道：Alpha CRM 将 AI 跟进助手向全部付费版开放，宣称可减少销售约 30% 的日常跟进书写时间。"
+    },
+    {
+      "kind": "news",
+      "url": "https://saasreview.example.com/a/alpha-followup",
+      "published_at": "2026-08-27T09:15:00",
+      "title": "实测 Alpha CRM 跟进助手：自动化与人工兜底",
+      "summary": "独立评测：对建议文案质量、触发时机与人工兜底机制做了逐项测试，结论见正文。"
+    },
+    {
+      "kind": "rss",
+      "url": "https://alpha-crm.example.com/changelog.rss#mobile-121",
+      "published_at": "2026-08-29T10:40:00",
+      "title": "预告：v12.1 移动端日历与待办同步",
+      "summary": "下个小版本将支持手机日历日程与销售待办双向同步，预计 9 月中旬上线。"
+    }
+  ]
+}

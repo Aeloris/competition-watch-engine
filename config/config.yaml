@@ -1,0 +1,40 @@
+# ============ 应用 ============
+app:
+  name: competition-watch-agent
+  log_level: INFO
+  data_dir: ./data            # 运行时产物：快照/事件/报告/job 状态
+  fixtures_dir: ./fixtures    # 测试/演示数据（离线回放底座）
+
+# ============ LLM（Phase 0 即可用，同项目一约定）============
+llm:
+  provider: mock              # mock | dashscope；没配 key 时保持 mock 离线可跑
+  model: qwen-plus            # 切 dashscope 时生效
+  timeout_sec: 60
+  temperature: 0.2            # 结构化任务偏低温
+  max_retries: 3
+  api_key_env: DASHSCOPE_API_KEY   # key 从环境变量读，绝不放 yaml
+
+# ============ 信源（Phase 2 Researchers/adapter 用）============
+sources:
+  mock_dir: ./fixtures/sources      # MockSource 读取的假数据目录（离线回放底座）
+  concurrency_limit: 4              # asyncio 信号量：并发 Worker 上限（控 QPS/成本）
+  fetch_timeout_sec: 15             # 单个信源抓取超时（真 adapter 用，Phase 2 起）
+  max_retries: 2                    # 单源失败重试（退避后仍失败→隔离标注，不中断全局）
+  enabled: [website, news, rss]     # 本轮启用的信源类型（官方源默认全 mock）
+
+# ============ 调度（Phase 7 APScheduler 用，先占位）============
+schedule:
+  cron: "0 9 * * 1"          # 每周一 09:00 生成周报
+  alert_on_high_threat: true # 高威胁事件不等周报、即时告警
+
+# ============ 流水线（Phase 4-7 用，先占位）============
+pipeline:
+  review_max_rewrites: 2     # Reviewer 打回 Writer 改写限次（防死循环烧 token）
+  diff_period: "week"        # 快照粒度：周
+  snapshot_store: json       # json | sqlite（Phase 1 memory 持久化用）
+
+# ============ 向量库（Phase 3 去重语义聚类用，占位；无 docker → qdrant 本地模式）============
+vector_db:
+  provider: qdrant_local     # qdrant_local | qdrant_server
+  path: ./data/qdrant
+  collection: fact_cards

@@ -1,0 +1,4 @@
+{
+  "reply": "【mock 固定应答】采集任务清单已生成：竞品 Alpha × 官网/新闻/RSS × 增量(since=上周)。",
+  "note": "离线确定性回复源。Phase 4 起结构化输出阶段会按 pydantic schema 换用多份 fixture。"
+}

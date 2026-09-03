@@ -1,0 +1,57 @@
+{
+  "id": "bi_beta",
+  "name": "Beta BI",
+  "aliases": ["Beta BI", "Beta", "贝塔BI"],
+  "note": "Mock 竞品 B：一家 BI/商业智能厂商。items 覆盖三类、跨两周。图表库 3.0 发布事件在 website+news 两处重复，供去重验证；changelog 另有独立更新项。",
+  "items": [
+    {
+      "kind": "website",
+      "url": "https://beta-bi.example.com/blog/connectors-6",
+      "published_at": "2026-08-18T09:20:00",
+      "title": "新增 6 个数据连接器：飞书多维表格 / 本地大文件 CSV",
+      "summary": "本次新增飞书多维表格、阿里云 OSS、本地大文件 CSV 等 6 类连接器，接入向导同步简化。"
+    },
+    {
+      "kind": "rss",
+      "url": "https://beta-bi.example.com/changelog.rss#ai-sql",
+      "published_at": "2026-08-20T16:00:00",
+      "title": "更新：SQL 编辑器支持 AI 生成查询（Beta 内测）",
+      "summary": "自然语言描述需求可直接生成 SQL，当前为内测灰度，支持结果校验与回写。"
+    },
+    {
+      "kind": "rss",
+      "url": "https://beta-bi.example.com/changelog.rss#share-perm",
+      "published_at": "2026-08-24T11:00:00",
+      "title": "更新：看板分享新增链接权限与过期时间",
+      "summary": "对外分享看板可设仅查看/可筛选与访问过期时间，审计日志同步补齐。"
+    },
+    {
+      "kind": "website",
+      "url": "https://beta-bi.example.com/blog/charts3-mobile",
+      "published_at": "2026-08-26T08:30:00",
+      "title": "图表库 3.0 + 移动端适配正式发布",
+      "summary": "图表库重写为 3.0：新增 12 种可视化、移动端自适应布局与离线缓存，创作端与查看端同步升级。"
+    },
+    {
+      "kind": "news",
+      "url": "https://datanews.example.com/beta-bi-charts3",
+      "published_at": "2026-08-26T14:00:00",
+      "title": "Beta BI 图表库 3.0：面向业务人员的自助可视化",
+      "summary": "报道称其把常用图表收敛为模板化配置，降低业务人员上手门槛；与官网同日发布。"
+    },
+    {
+      "kind": "news",
+      "url": "https://techwire.example.com/p/bi-tools-roundup-2026",
+      "published_at": "2026-08-28T10:10:00",
+      "title": "2026 商业智能工具盘点：自助式分析成主线",
+      "summary": "行业盘点提及多家厂商，主线观点为自助式分析与 AI 写查询成为标配。"
+    },
+    {
+      "kind": "rss",
+      "url": "https://beta-bi.example.com/changelog.rss#row-level",
+      "published_at": "2026-08-29T13:20:00",
+      "title": "预告：目录级与行级权限管控下月开放",
+      "summary": "数据权限将从目录级扩展到行级，支持按维度成员过滤，预计 9 月下旬开放。"
+    }
+  ]
+}
