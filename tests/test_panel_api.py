@@ -27,6 +27,7 @@ from memory.schemas import EventKind
 from orchestration import graph as graph_mod
 from reviewer import UNGROUNDED_FP, UNSOURCED_URL
 from service import build_service_context
+from service.notifier import make_alert
 from writer import Writer
 
 
@@ -115,6 +116,9 @@ def test_inbox_status_filter_and_resolve_lifecycle(client, monkeypatch):
                                                "by": "x"}).status_code == 422
     assert client.post("/inbox/resolve", json={"entry_id": eid, "action": "release",
                                                "by": ""}).status_code == 422
+    # A5 回归：全空白 by（"   "）也要 422（先 strip 再判空，防把空白处理人存进审计）
+    assert client.post("/inbox/resolve", json={"entry_id": eid, "action": "release",
+                                               "by": "   "}).status_code == 422
 
 
 # ---------------------------------------------------------------- 发布视图过滤
@@ -213,3 +217,15 @@ def test_panel_empty_state_ok(client):
     """空 ctx：面板 200 且给"暂无任务/无待办"提示（不 500）。"""
     html = client.get("/panel").text
     assert "人工放行面板" in html and "待办已清空" in html and "暂无任务" in html
+
+
+def test_panel_alerts_newest_first(client):
+    """A7 回归：告警台账按 append 序存（旧→新），面板"最近告警"必须最新在前——
+    旧实现 `[:8]` 直接取头 = 把最旧的 8 条当"最近告警"（注释还错标"台账已倒序存"）。"""
+    ctx = client.ctx
+    ctx.notifier.deliver(make_alert("high_threat", summary="ALERT-OLD",
+                                    competitor_id="crm_alpha", period="2026-W35"))
+    ctx.notifier.deliver(make_alert("high_threat", summary="ALERT-NEW",
+                                    competitor_id="crm_alpha", period="2026-W35"))
+    html = client.get("/panel").text
+    assert html.index("ALERT-NEW") < html.index("ALERT-OLD")   # 最新在前（append 序须反转再截取）

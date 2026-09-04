@@ -118,6 +118,25 @@ def test_alert_ledger_file_append_read(tmp_path):
     assert ctx.list_alerts()[0]["event_type"] == "high_threat"
 
 
+def test_add_run_replaces_in_place_not_moves_to_tail(tmp_path):
+    """A6 回归：同名 run_id 覆盖必须**原位**替换，不能"去重后追加到尾部"——
+    否则重跑记录被挪到最后，runs 顺序与真实执行顺序错位（报告/发布视图按 runs 顺序拼装会错）。"""
+    ts = _ctx(tmp_path).task_store
+    ts.create_task("t", period="2026-W35", competitors_requested=["crm_alpha", "bi_beta"],
+                   created_at="2026-09-01T09:00:00+00:00")
+    ra = RunMeta(run_id="ra", competitor_id="crm_alpha", period="2026-W35",
+                 status=RunStatus.done, verdict="PASS", trace={"collected": 5})
+    rb = RunMeta(run_id="rb", competitor_id="bi_beta", period="2026-W35",
+                 status=RunStatus.done, verdict="PASS", trace={"collected": 6})
+    ts.add_run("t", ra)
+    ts.add_run("t", rb)
+    ra2 = ra.model_copy(update={"verdict": "human"})      # 重跑 ra：原位覆盖，rb 的位置不动
+    ts.add_run("t", ra2)
+    meta = ts.get_task("t")
+    assert [r.run_id for r in meta.runs] == ["ra", "rb"]  # 旧实现 → ["rb", "ra"]
+    assert meta.runs[0].verdict == "human"
+
+
 # ---------------------------------------------------------------- Notifier 适配层
 
 def test_webhook_fail_fast_no_url_and_deliver_placeholder(tmp_path):
@@ -128,6 +147,8 @@ def test_webhook_fail_fast_no_url_and_deliver_placeholder(tmp_path):
     ev = make_alert("run_failed", summary="s", competitor_id="crm_alpha", period="2026-W35", run_id="r1")
     with pytest.raises(NotImplementedError):
         WebhookNotifier("https://hooks.example/x").deliver(ev)  # 诚实：占位不真发 HTTP
+    # A9 回归：壳不落台账 → list_log 返回空（此前 raise NotImplementedError → GET /alerts 500）
+    assert WebhookNotifier("https://hooks.example/x").list_log() == []
 
 
 # ---------------------------------------------------------------- execute_task 正常路径

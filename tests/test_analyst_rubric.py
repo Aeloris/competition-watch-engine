@@ -144,10 +144,29 @@ def test_default_rule_order_signal_before_catchall():
     assert ids.index("third_party_review") < ids.index("feature_update")
     assert ids.index("market_pan") < ids.index("market_other")
     assert ids.index("org_hiring") < ids.index("org_other")
-    # 高威胁的红线规则必须整体最前（正式发布/降价/处罚不被任何 medium/low 抢先）
-    for high_rule in ("release_ga", "price_cut", "penalty"):
+    # 即时威胁（降价/监管）必须整体最前，不被任何 medium/low 抢先（"即将降价"也算当下威胁）
+    for high_rule in ("price_cut", "penalty"):
         for low_rule in ("roadmap_preview", "market_pan", "org_hiring"):
             assert ids.index(high_rule) < ids.index(low_rule)
+    for low_rule in ("market_pan", "org_hiring"):
+        assert ids.index("release_ga") < ids.index(low_rule)
+    # roadmap_preview 是唯一排进红线区"前面"的 LOW：它必须先于 release_ga 接走"即将/将于 X 正式发布"
+    # 这类**尚未交付**的预告（→LOW），但不允许比降价/监管更前（那是即时威胁）。
+    assert ids.index("roadmap_preview") < ids.index("release_ga")
+    assert ids.index("price_cut") < ids.index("roadmap_preview")
+    assert ids.index("penalty") < ids.index("roadmap_preview")
+
+
+def test_imminent_release_preview_is_low_but_delivered_ga_is_high():
+    """A11 回归：词面同含"即将"与"正式发布"的标题是未交付预告 → LOW；
+    真已交付的 GA（标题无 预告/即将/将于 前置词）→ HIGH；"即将降价"仍是当下威胁 → HIGH。"""
+    r = ThreatRubric()
+    a = r.apply(_ev("v12.1 即将正式发布：目录级权限管理", Dimension.feature))
+    assert (a.level, a.rule_id) == (ThreatLevel.low, "roadmap_preview")
+    b = r.apply(_ev("Alpha CRM v12.0 正式发布：智能跟进助手 GA", Dimension.feature))
+    assert (b.level, b.rule_id) == (ThreatLevel.high, "release_ga")
+    c = r.apply(_ev("Beta BI 即将下调全系订阅价 30%", Dimension.price))
+    assert (c.level, c.rule_id) == (ThreatLevel.high, "price_cut")
 
 
 # ---------- 性质 3：不越权 —— Analyst 只分级，不改维度/fp/kind ----------

@@ -36,11 +36,16 @@ def _sha1_hex(s: str) -> str:
 
 
 def version_anchor(title: str) -> str | None:
-    """从原文标题抽"版本锚"：v12.0 / 3.0 → '120' / '30'（去 v、去点、小写）；无则 None。"""
+    """从原文标题抽"版本锚"：v12.0 / 3.0 → '12.0' / '3.0'（去 v、小写，**保留小数点结构**）。
+
+    保留点号是刻意的：'1.20' 与 '12.0' 是不同版本，一旦像旧实现那样 `re.sub(r"\\D", "", …)`
+    把非数字全剥掉，两者都变 '120' → 撞锚误并成同一发布事件。锚只做同竞品同维度簇内相等比较，
+    含点不影响匹配，只消除歧义。
+    """
     m = _VERSION_RE.search(title)
     if not m:
         return None
-    return re.sub(r"\D", "", m.group(0).lower())
+    return m.group(0).lower().lstrip("v")
 
 
 def _strip_aliases(norm: str, aliases: list[str]) -> str:

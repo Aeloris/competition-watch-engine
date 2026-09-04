@@ -250,9 +250,17 @@ class Reviewer:
                 if not anchored:
                     continue
                 axis, da_dir, db_dir = conflict
+                wa = cls._word(text_a, axis, da_dir)
+                wb = cls._word(text_b, axis, db_dir)
+                # 互斥的两条**都要**挂到对应条目（each 一条问题）：只拦靠前那条会让另一条在
+                # published_view 里"无门卫指向"而被当自审通过自动发布——假的那侧会漏进发布视图。
+                # 现在两条都转人工，人工在双方间定夺（release 保一侧 / dismiss 剔一侧），不自动二选一。
                 out.append(ReviewProblem(
                     CONTRADICTION, a + 1, ia.get("fp"),
-                    f"同竞品条目 #{a + 1}「{ia.get('title')}」({cls._word(text_a, axis, da_dir)}) ↔ "
-                    f"#{b + 1}「{ib.get('title')}」({cls._word(text_b, axis, db_dir)})：{axis}相反"
-                    f"且共享主体锚——两条互斥存疑，转人工复核(不自动二选一)"))
+                    f"条目 #{a + 1}「{ia.get('title')}」({wa}) 与 #{b + 1}「{ib.get('title')}」({wb}) "
+                    f"同竞品同轴{axis}方向相反且共享主体锚——互斥存疑；本条暂挂起，需人工定夺"))
+                out.append(ReviewProblem(
+                    CONTRADICTION, b + 1, ib.get("fp"),
+                    f"条目 #{b + 1}「{ib.get('title')}」({wb}) 与 #{a + 1}「{ia.get('title')}」({wa}) "
+                    f"同竞品同轴{axis}方向相反且共享主体锚——互斥存疑；本条暂挂起，需人工定夺"))
         return out

@@ -86,9 +86,14 @@ def get_task_report(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)
             continue
         pipeline = ctx.settings.data_path / "pipeline" / f"{run.run_id}.json"
         draft = None
+        draft_broken = False
         if pipeline.exists():
-            final = json.loads(pipeline.read_text(encoding="utf-8"))
-            draft = final.get("draft")
+            try:
+                final = json.loads(pipeline.read_text(encoding="utf-8"))
+                draft = final.get("draft")
+            except (ValueError, OSError):
+                # 半截/损坏 pipeline 文件：draft 置空并如实标注，别让单条坏文件把整页 report 打成 500
+                draft_broken = True
         comps.append(
             {
                 "competitor_id": run.competitor_id,
@@ -98,6 +103,8 @@ def get_task_report(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)
                 "threat_radar": run.threat_radar,
                 "trace": run.trace,
                 "draft": draft,  # headline + sections + items + sources
+                "draft_broken": draft_broken,
+                "note": "pipeline 文件损坏，draft 缺失" if draft_broken else None,
                 "inbox_count": run.inbox_count,
             }
         )

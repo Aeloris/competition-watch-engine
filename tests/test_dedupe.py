@@ -72,10 +72,12 @@ def test_classify_synthetic_samples_per_dimension():
 # ---------- version_anchor ----------
 
 def test_version_anchor_extracts_release_identity():
-    assert version_anchor("Alpha CRM v12.0 正式发布：智能跟进助手 GA") == "120"
-    assert version_anchor("【发布】v12.0 智能跟进助手 GA") == "120"
-    assert version_anchor("Beta BI 图表库 3.0：面向业务人员的自助可视化") == "30"
-    assert version_anchor("预告：v12.1 移动端日历与待办同步") == "121"
+    # 锚保留小数点结构（回归）：'1.20' 与 '12.0' 是不同版本，绝不因去点拉平撞锚（防误并不同发布事件）
+    assert version_anchor("Alpha CRM v12.0 正式发布：智能跟进助手 GA") == "12.0"
+    assert version_anchor("【发布】v12.0 智能跟进助手 GA") == "12.0"
+    assert version_anchor("Beta BI 图表库 3.0：面向业务人员的自助可视化") == "3.0"
+    assert version_anchor("预告：v12.1 移动端日历与待办同步") == "12.1"
+    assert version_anchor("修复 1.20 的导出崩溃（v1.20 补丁发布）") == "1.20"  # ≠ "12.0"
     assert version_anchor("2026 商业智能工具盘点：自助式分析成主线") is None   # 年份不匹配
     assert version_anchor("开放平台 API v2 上线：Webhook 事件订阅") is None      # v2 无小数点不算发布锚
 

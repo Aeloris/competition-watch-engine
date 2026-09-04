@@ -87,6 +87,21 @@ def test_post_unknown_competitor_404_and_unknown_task_404(client):
     assert client.get("/tasks/nope/report").status_code == 404
 
 
+def test_report_handles_corrupt_pipeline_file_not_500(client):
+    """A8 回归：pipeline JSON 半截/损坏时 report 路由不能 500——如实标注 draft 缺失(draft_broken)，
+    一条坏文件不把整页 report 打挂（同 list_tasks 容忍损坏文件的读取哲学）。"""
+    post = client.post("/tasks", json={"period": "2026-W35", "competitor_id": "crm_alpha"})
+    body = post.json()
+    run = body["runs"][0]
+    pipeline = client.ctx.settings.data_path / "pipeline" / f"{run['run_id']}.json"
+    assert pipeline.exists()
+    pipeline.write_text("{corrupt json, not valid", encoding="utf-8")
+    rep = client.get(f"/tasks/{body['task_id']}/report")
+    assert rep.status_code == 200
+    comp = rep.json()["report"][0]
+    assert comp["draft"] is None and comp["draft_broken"] is True
+
+
 # ---------------------------------------------------------------- 收件箱
 
 def test_inbox_shows_pending_after_human_run(client, monkeypatch):

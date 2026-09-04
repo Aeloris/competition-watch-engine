@@ -165,3 +165,12 @@ def test_single_competitor_builds_but_no_cross_claims():
     assert rep.both_moved_dims == []                       # 无"横向"可言
     assert [(s.dimension, s.mover) for s in rep.single_moved_dims] == [(Dimension.feature, "crm_alpha")]
     assert rep.first_move_counts == {"crm_alpha": 1}
+
+
+# --- 10) B1 回归：单边动作但无 first_seen 日期 → 不硬给"率先"（无时序依据不自说自话）---
+def test_single_competitor_no_date_no_first_mover_claim():
+    rep = build([_view("crm_alpha", [_item(Dimension.feature, None)])])
+    row = rep.rows[0]
+    assert row.orderable is False
+    assert row.first_mover == []                          # 旧实现无条件 [sole]，没日期也硬称"先动"
+    assert rep.first_move_counts == {}

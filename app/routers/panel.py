@@ -136,7 +136,8 @@ def panel_overview(ctx: ServiceContext = Depends(get_service_ctx)) -> str:
     pending = list_inbox_entries(ctx.task_store, status="pending")
     resolved = list_inbox_entries(ctx.task_store, status="resolved")
     tasks = ctx.task_store.list_tasks()[:10]
-    alerts = list(ctx.list_alerts())[:8]  # 台账已倒序存（最新在前，见 alerts 路由）
+    # 台账按 append 序存（旧→新），面板要"最近 8 条" → 先反转再截断（见 alerts 路由同样手法）
+    alerts = list(reversed(list(ctx.list_alerts())))[:8]
 
     queue_html = "".join(_entry_html(e) for e in pending)
     if not pending:

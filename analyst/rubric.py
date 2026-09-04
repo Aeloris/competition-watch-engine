@@ -58,12 +58,13 @@ class ThreatRubric:
     """有序规则阶梯（先命中先定级，命中即停）——README2 §5.6『规则先命中』的落地。
 
     默认阶梯的口径（文档化，便于面试复述与测试锁定）：
-      正式发布/GA/全面开放 → high（用户可见的产品级变化）；
-      降价/折扣/免费       → high（价格战直接冲击我方定价/留客）；
-      处罚/诉讼/监管       → high（合规风险信号）；
-      融资/收购           → medium；第三方实测/评测 → medium；常规功能迭代 → medium；
-      价格条款常规调整     → medium；
-      预告/路线图（未上线）→ low（进观察，不报即时威胁）；行业盘点/招聘/内容 → low。
+      降价/折扣/免费        → high（"即将降价"这类价格战预告也是当下威胁，直接冲击定价/留客）；
+      处罚/诉讼/监管        → high（合规风险信号）；
+      预告/路线图（含"即将/将于/预计 X 正式发布"式预告）→ low：判定顺序在 release_ga 之前——
+        尚未交付是观察信号、不是已交付 HIGH；真已交付的 GA 标题（无 预告/即将/将于 词）走
+        release_ga → high（用户可见的产品级变化）；
+      融资/收购 → medium；第三方实测/评测 → medium；常规功能迭代 → medium；
+      价格条款常规调整 → medium；行业盘点/招聘/内容 → low。
     """
 
     def __init__(self, rules: list[RubricRule] | None = None) -> None:
@@ -71,13 +72,15 @@ class ThreatRubric:
 
     @staticmethod
     def default_rules() -> list[RubricRule]:
-        # 顺序铁律：跨维度/低置信的"定性信号规则"（预告、第三方、盘点、招聘）必须排在
-        # 各维度"兜底规则"（feature_update/market_other/org_other/…）之前——
-        # 否则 feature 的预告会被 feature 兜底提前判成 medium。先命中先定级，命中即停。
+        # 顺序铁律（先命中先定级，命中即停）：
+        # ① 已是即时威胁的高信号（降价/监管）**整体最前**：价格战预告（"即将降价 30%"）是当下威胁，
+        #    不能被 roadmap_preview 的 LOW 抢走；
+        # ② roadmap_preview 提前于 release_ga——"即将/将于/预计 X 正式发布·全面开放"是**尚未交付**的
+        #    预告，应 LOW 进观察；真已交付的 GA 标题（"v12.0 正式发布"）不含 预告/即将/将于 前置词，
+        #    落在 release_ga → HIGH，互不干扰；
+        # ③ 其余跨维度/低置信的定性信号规则（第三方、盘点、招聘）排在各自维度"兜底规则"
+        #   （feature_update/market_other/org_other/…）之前——否则 feature 的盘点会被 feature 兜底判 medium。
         return [
-            RubricRule("release_ga", "正式发布/GA 上线", ThreatLevel.high,
-                       "竞品产品级变化已向用户交付（正式发布/GA/全面开放）——直接挤占我方客群注意与需求",
-                       patterns=("正式发布", "正式上线", "全面开放", "公开发布")),
             RubricRule("price_cut", "降价/让利", ThreatLevel.high,
                        "价格条款直接冲击我方定价与留客（价格战信号）",
                        patterns=("降价", "折扣", "优惠", "免费", "下调"), dimension=Dimension.price),
@@ -87,6 +90,9 @@ class ThreatRubric:
             RubricRule("roadmap_preview", "预告/路线图", ThreatLevel.low,
                        "尚未上线，属路线图/预告——进观察，暂不构成即时威胁",
                        patterns=("预告", "即将", "预计", "路线图", "计划于", "下月", "将于")),
+            RubricRule("release_ga", "正式发布/GA 上线", ThreatLevel.high,
+                       "竞品产品级变化已向用户交付（正式发布/GA/全面开放）——直接挤占我方客群注意与需求",
+                       patterns=("正式发布", "正式上线", "全面开放", "公开发布")),
             RubricRule("third_party_review", "第三方实测/评测", ThreatLevel.medium,
                        "第三方深度实测放大竞品功能的市场认知（非竞品自宣，但影响决策者心智）",
                        patterns=("实测", "评测", "测评", "上手体验")),

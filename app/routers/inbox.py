@@ -15,7 +15,7 @@ from __future__ import annotations
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.routers.deps import get_service_ctx
 from service.context import ServiceContext
@@ -37,6 +37,14 @@ class ResolveRequest(BaseModel):
         ..., description="release=放行(进发布视图) | dismiss=驳回(剔除) | note=仅备注(不销案)")
     by: str = Field(..., min_length=1, description="处理人（可追责）")
     note: str = Field("", description="批注/说明（可选）")
+
+    @field_validator("by")
+    @classmethod
+    def _by_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("by 不能为空白（处理人需可追责）")
+        return v
 
 
 @router.get("/inbox")
@@ -63,4 +71,7 @@ def resolve(req: ResolveRequest, ctx: ServiceContext = Depends(get_service_ctx))
         raise HTTPException(status_code=404, detail=str(exc))
     except EntryAlreadyResolved as exc:
         raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        # pydantic 已拦空白 by/非法 action，此为服务层兜底（别让校验漏洞变 500）
+        raise HTTPException(status_code=422, detail=str(exc))
     return {"resolved": True, "entry": view}

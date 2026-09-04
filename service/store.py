@@ -10,10 +10,16 @@
 """
 from __future__ import annotations
 
+import itertools
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
+
+# 单进程内写文件锁：append_alert 的"读-改-写"与并发 deliver 互斥（FastAPI 线程池并发下防丢写）
+_alert_lock = threading.Lock()
+_tmp_seq = itertools.count()
 
 from service.schemas import RunMeta, TaskMeta, TaskStatus
 
@@ -25,7 +31,9 @@ def utc_now_iso() -> str:
 
 def _atomic_write_json(path: Path, obj) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    # 唯一 tmp 名（pid + 自增序号）：固定 ".tmp" 会让上次异常残留的 tmp 被本调用直接吞掉，
+    # 多进程/并发下更可能互相 rename 到对方半成品。唯一名保证 os.replace 目标只有最终文件。
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{next(_tmp_seq)}.tmp")
     tmp.write_text(json.dumps(obj, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp, path)
 
@@ -79,8 +87,16 @@ class TaskStore:
         meta = self.get_task(task_id)
         if meta is None:
             raise KeyError(f"task {task_id} 不存在")
-        # 同名 run_id 重复记则覆盖（幂等防重放），否则追加
-        meta.runs = [r for r in meta.runs if r.run_id != run.run_id] + [run]
+        # 同名 run_id 重复记则**原位覆盖**（幂等防重放）；否则追加。
+        # 注意不能写成"去重后追加到尾部"——那会把重跑记录挪到末尾，打乱 runs 与真实执行顺序的对应
+        runs = list(meta.runs)
+        for i, r in enumerate(runs):
+            if r.run_id == run.run_id:
+                runs[i] = run
+                break
+        else:
+            runs.append(run)
+        meta.runs = runs
         self._save(meta)
         return meta
 
@@ -135,6 +151,7 @@ def read_alerts(settings) -> list[dict]:
 
 def append_alert(settings, alert: dict) -> None:
     """追加一条告警到台账（原子写整个数组，规模小无碍；数组可读可审计）。"""
-    alerts = read_alerts(settings)
-    alerts.append(alert)
-    _atomic_write_json(alerts_path(settings), alerts)
+    with _alert_lock:  # 读-改-写整段持锁：并发 deliver 不丢写（FastAPI 线程池多请求并发下）
+        alerts = read_alerts(settings)
+        alerts.append(alert)
+        _atomic_write_json(alerts_path(settings), alerts)

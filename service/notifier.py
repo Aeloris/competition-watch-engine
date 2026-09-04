@@ -67,7 +67,9 @@ class WebhookNotifier(Notifier):
         )
 
     def list_log(self) -> list[dict]:
-        raise NotImplementedError
+        # Webhook 壳不落本地台账（无 settings 台账根）→ GET /alerts 返回空即可，
+        # 不能 raise：alerts 配了 webhook_url 的实例一查台账就 500。真渠道联调后如需留痕再实现。
+        return []
 
 
 def build_notifier(settings: Settings) -> Notifier:

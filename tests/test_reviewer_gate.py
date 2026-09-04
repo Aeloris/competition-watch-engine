@@ -25,6 +25,7 @@ from orchestration.nodes import reviewer_node
 from reviewer import (
     CONTRADICTION,
     DUPLICATE,
+    NO_EVIDENCE,
     UNSOURCED_URL,
     UNGROUNDED_CLAIM,
     UNGROUNDED_FP,
@@ -231,3 +232,38 @@ def test_graph_injected_fake_item_intercepted_not_published(tmp_path, monkeypatc
     assert final["human_inbox"]                       # 落人工收件箱 → 人工确认才放行
     assert final["gate_trace"][-1]["verdict"] == "human"  # 打回有 trace
     assert final["gate"]["verdict"] != "PASS"         # 假事件绝不会进"可发布"态
+
+
+# ---------- 回归：先审后发不凿洞（A1 矛盾双侧 / A2 信任时不丢结构缺口） ----------
+
+def test_contradiction_holds_both_sides_not_just_first_item(tmp_path):
+    """A1 回归：互斥两条**各**挂一条 CONTRADICTION（各锚己侧 item_index）。
+
+    旧实现只把矛盾挂在"靠前那条"(a+1)——另一条在收件箱里没有指向它的门卫问题，
+    published_view 会把"无 refs"的条目当自审通过自动发布 → 假的一侧漏进发布视图。
+    现在两侧都转人工，人工在双方间定夺（release 保一侧 / dismiss 剔一侧）。
+    """
+    a = _item("v12.1 移动端套餐价格上调", fp="fp-a", urls=("https://a.example/p1",))
+    b = _item("v12.1 全版本订阅降价促销", fp="fp-b", urls=("https://a.example/p2",))
+    out = _review_node([a, b])
+    assert out["gate"]["verdict"] == "human"
+    assert [p["code"] for p in out["gate"]["problems"]].count(CONTRADICTION) == 2
+    inbox = {e["item_index"]: e for e in out["human_inbox"]}
+    assert set(inbox) == {1, 2}                        # 两侧都进收件箱，不是只拦靠前的 #1
+    assert inbox[1]["fp"] == "fp-a" and inbox[2]["fp"] == "fp-b"
+    assert all(e["code"] == CONTRADICTION for e in inbox.values())
+
+
+def test_human_inbox_keeps_structural_problems_when_trust_present(tmp_path):
+    """A2 回归：信任问题直转 human 时，其它条目的**结构缺口**也要一并落收件箱。
+
+    旧实现 `targets = trust or structural`：trust 非空就只落信任类 → 纯结构缺口(无 UNSOURCED/
+    UNGROUNDED 指向)的条目在发布视图因"无门卫指向"被当自审通过自动发布 = 绕过先审后发。
+    """
+    trust = _item(title="真 fp 但编造出处", fp="fp-real", urls=("https://fake.example/x",))
+    bare = _item(title="有 fp 但无出处", fp="fp-real", urls=())   # 无 evidence_urls → NO_EVIDENCE(结构)
+    out = _review_node([trust, bare], cards=[_card("https://a.example/x")],
+                       changes=[{"fp": "fp-real"}])
+    assert out["gate"]["verdict"] == "human"
+    codes = {e["code"] for e in out["human_inbox"]}
+    assert UNSOURCED_URL in codes and NO_EVIDENCE in codes       # 信任 + 结构都要进收件箱等人工

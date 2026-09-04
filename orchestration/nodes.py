@@ -215,11 +215,12 @@ def reviewer_node(state: dict, ctx: NodeContext) -> dict:
         "problems": typed, "reasons": reasons,
     }]
 
-    # 转人工 → 问题条目落人工收件箱（人工确认才放行）
+    # 转人工 → 问题条目落人工收件箱（人工确认才放行）。
+    # 信任问题直转 human 时，本跑即终止、结构缺口不再走 REWRITE——若只落信任类，结构有缺的条目
+    # 会在 published_view 里"无门卫指向"被当自审通过自动发布。故 human 一律把本次全部问题落箱。
     human_inbox = list(state.get("human_inbox") or [])
     if verdict == "human":
-        targets = trust or structural
-        for p in targets:
+        for p in problems:
             human_inbox.append({
                 "competitor_id": state.get("competitor_id"),
                 "period": state.get("period"),

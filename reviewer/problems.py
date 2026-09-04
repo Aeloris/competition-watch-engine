@@ -43,7 +43,7 @@ class ReviewProblem:
     """一条门卫问题：code + 1 基条目序号 + 身份 fp + 人话 detail。"""
 
     code: str
-    item_index: int           # 周报条目 1 基序号（可空语义：0 表示不落单条，如跨条目矛盾）
+    item_index: int           # 周报条目 1 基序号（矛盾互斥双方各落一条、各锚己侧——见 gate._contradictions）
     fp: str | None            # 条目的身份指纹（回溯锚；缺则 None）
     detail: str               # 人话描述（同 gate.reasons 文案，进 trace / 收件箱）
 

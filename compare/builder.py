@@ -115,11 +115,12 @@ def build(views: list[CompetitorView]) -> CrossCompareReport:
                     items=cell_items,
                 )
             )
-        # first_mover：单边动作 → 独占即它（无时序断言）；多竞品 → 最早 first_seen，并列可多条
+        # first_mover：单边动作 → 有可排序日期才算"该竞品先行"（无日期断言不出 first_mover，
+        # 否则给了第一名却没给时序依据，横向对比表会"自说自话"）；多竞品 → 最早 first_seen，并列可多条
         if len(moved) == 1:
             sole = moved[0]
             orderable = cells[0].earliest is not None
-            first_mover = [sole.competitor_id]
+            first_mover = [sole.competitor_id] if orderable else []
         else:
             dated = [c for c in cells if c.earliest is not None]
             orderable = len(dated) > 0

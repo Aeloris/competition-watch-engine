@@ -63,7 +63,7 @@ dimension 轴对齐（**维度对齐 ≠ 实体对齐**：feature 线谁先动�
   error + bi 照常 PASS + `run_failed` 告警；演练 B 注入"真 fp 拼编造 URL"的假 writer（复用 P6 手法）→ 门卫 human 拦下、
   落人工收件箱（`UNSOURCED_URL`）+ `human_inbox` 告警，随后 `POST /inbox/resolve` release → 该条目从 held 进发布视图
   （human_released=true）、dismiss → 进 dismissed 审计区——**假事件绝不会以"零收件箱地 completed"蒙混过关**。
-- **全绿 180**（123 基线 + service 21 + eval 15 + panel 6 + compare 15：`tests/test_compare_{builder,api}.py`）；
+- **全绿 187**（126 基线 + service 23 + eval 15 + panel 7 + compare 16：`tests/test_compare_{builder,api}.py`）；
   数据全隔离：测试用 `build_service_context(data_dir=tmp)`，memory/pipeline/service 互不写穿。
 - **诚实边界**：Webhook 仍是占位壳（不真发 HTTP），周报**对外真推送无渠道**——发布闭环止于 published_view（HTTP 查询态
   可复核快照）；Eval 数字是**固定语料回归基线**（gold 7 事件 + 6 对抗场景是"编得动的口径"，不是真实世界命中率；duplicate
@@ -75,7 +75,7 @@ dimension 轴对齐（**维度对齐 ≠ 实体对齐**：feature 线谁先动�
 
 ```bash
 uv sync
-uv run pytest            # 全绿（180）
+uv run pytest            # 全绿（187）
 uv run python -m eval.run   # Eval-Harness 回放评测 → data/eval/eval_report.{json,md}；门禁失败退出码 1
 uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"   # 流水线回放：trace + threat_radar + gate
 uv run uvicorn app.main:app --port 8000   # http://127.0.0.1:8000/health · http://127.0.0.1:8000/panel

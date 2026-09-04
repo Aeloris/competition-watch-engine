@@ -13,7 +13,7 @@
 > 增量「跨竞品横向对比」（README2 路线图之后，自主增量）：在 Phase 8 发布视图之上加**横着看**——
 > `compare/` 纯函数（已放行条目按 dimension 轴对齐，**维度对齐 ≠ 实体对齐**）+
 > `service/compare.py`（compare_view）+ `GET /tasks/{id}/compare`（<2 家已放行 422）+ 面板横向对比段。
-> **180 测试全绿**（144 基线 + eval 15 + panel API 6 + 横向对比 15：`tests/test_compare_{builder,api}.py`）。
+> **187 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16：`tests/test_compare_{builder,api}.py`）。
 > 编排与门卫内部口径见 [`docs/orchestrator.md`](orchestrator.md) / [`docs/reviewer.md`](reviewer.md)，
 > 评测口径见 [`docs/eval.md`](eval.md)，横向对比口径见 [`docs/compare.md`](compare.md)。
 
@@ -213,7 +213,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 - **评审评测是固定语料回归基线**：Eval-Harness 的数字（gold 7/7、对抗 6/6 等）只证明"造的固定场景里流水线
   稳定做到设计该做的"，**不是真实世界表现**（详见 docs/eval.md §6）；P7 的 trace/radar 数字为实测（非编造）。
 - **README2 里的目标指标（如告警延迟、覆盖率）仍是设计目标占位**；本期实测口径只有上面测试锁死的部分
-  （service 21 + panel 6 + eval 15 + compare 15 条）。
+  （service 23 + panel 7 + eval 15 + compare 16 条）。
 - **横向对比不做实体对齐**：GET /tasks/{id}/compare 的 first_mover 是"该维度本期动作时间先后"（维度对齐），
   不宣称 A 的某功能 == B 的某功能；实体级等价需语义实体解析 / embedding（更后续，不上简历）。single_moved 是
   "只有一家动"的事实陈述，不自动译成"对方是盲点"。severity 只并列计数（docs/compare.md §3/§8）。
@@ -222,7 +222,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 
 ```bash
 uv sync
-uv run pytest                       # 全绿（Phase 8 + 增量 = 180：基线 144 + eval 15 + panel 6 + compare 15）
+uv run pytest                       # 全绿（Phase 8 + 增量 = 187：基线 149 + eval 15 + panel 7 + compare 16）
 uv run pytest tests/test_service_runtime.py tests/test_service_api.py tests/test_panel_api.py tests/test_compare_api.py -v
 uv run uvicorn app.main:app --port 8000   # 服务化 HTTP（0.9.0，含 /panel）
 # 跑一次"本期巡检"（单竞品调试 / 缺省 = 全部竞品 + 最近已结束 ISO 周）：
