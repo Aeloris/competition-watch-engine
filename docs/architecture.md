@@ -16,12 +16,17 @@
 > **发布视图** `published_view` 把周报 draft 按 resolution 过滤成 published / held / dismissed；
 > **简单面板** `app/routers/panel.py`（零构建 HTML + 原生 JS，调同款 JSON API）；**Eval-Harness**
 > `eval/` 给流水线加「固定语料回放评测 + 自动门禁」（回归一致性 / gold 真值集 7/7 / 对抗 6 场景全拦）。
+> 增量「跨竞品横向对比」= 在 Phase 8 发布视图之上加一层"横着看"：`compare/` 把 Task 内各竞品**已放行**条目
+> 按共享 dimension 轴对齐（维度对齐 ≠ 实体对齐——谁先动比最早 first_seen、单边动作=事实陈述、同维度高威胁并列
+> 计数不跨竞品排危险序；先审后发纪律延续：held/dismissed 不进对比），服务化 = `service/compare.py` +
+> GET /tasks/{id}/compare + 面板横向对比段（不足两家已放行 422 明说无可比）。
 > 本文先落两张与设计稿一致的 Mermaid（见 `README2.md` §4.1/§4.2），再给"今天真实能跑的部分 / 未来挂载点"对照，
 > 避免 README 只画将来、落地只有壳。数据模型细节见 [`docs/schema.md`](schema.md)，采集层细节见 [`docs/collectors.md`](collectors.md)，
 > 去重与跨期 diff 细节见 [`docs/memory.md`](memory.md)，编排状态机细节见 [`docs/orchestrator.md`](orchestrator.md)，
 > Analyst 分级 + Writer 周报细节见 [`docs/analyst_writer.md`](analyst_writer.md)，Reviewer 审稿门卫细节见 [`docs/reviewer.md`](reviewer.md)，
 > 服务层（任务/定时/告警/健壮性）细节见 [`docs/service.md`](service.md)，人工放行闭环 / 发布视图 / 简单面板
-> 见同一文档 Phase 8 段落，Eval-Harness 回放评测细节见 [`docs/eval.md`](eval.md)。
+> 见同一文档 Phase 8 段落，Eval-Harness 回放评测细节见 [`docs/eval.md`](eval.md)，跨竞品横向对比
+> 细节见 [`docs/compare.md`](compare.md)。
 
 ---
 
@@ -95,10 +100,11 @@ flowchart LR
 
 | 层 | 设计稿节点 | 状态 | 落地位置 |
 |---|---|---|---|
-| 服务层 | FastAPI | ✅ `/health` + `/` + 业务路由，version 0.8.0 | `app/main.py` |
+| 服务层 | FastAPI | ✅ `/health` + `/` + 业务路由，version 0.9.0 | `app/main.py` |
 | 服务层 | 任务/报告/告警 API | ✅ Phase 7 全套：POST /tasks（建+同步执行返回终态）/ GET /tasks / {id} / {id}/report（合并 pipeline draft）/ GET /inbox（人工收件箱）/ GET /alerts / POST /alerts/hook | `app/routers/{tasks,inbox,alerts,deps}.py` + `service/` |
 | 服务层 | 人工放行闭环 / 发布视图 | ✅ Phase 8：POST /inbox/resolve（release/dismiss=销案终态、note=只备注不销案，审计 by/note/resolved_at 落 run.human_inbox，entry_id=`{run_id}#{seq}`）+ GET /tasks/{id}/published（draft → published/held/dismissed 过滤；PASS 全自动发布） | `service/publish.py` + `app/routers/{inbox,tasks}.py` |
 | 服务层 | 简单面板（人工放行 + 告警可视化） | ✅ Phase 8 零构建 HTML：/panel 总览 + /panel/task/{id} 单任务（收件箱 放行/驳回/备注 按钮 + 发布视图，原生 JS 调同款 JSON API） | `app/routers/panel.py` |
+| 服务层 | 跨竞品横向对比 | ✅ 增量：`compare/` 纯函数（维度轴对齐 ≠ 实体对齐；已放行条目对齐 + first_mover/单边动作/雷达并列）+ GET /tasks/{id}/compare + 面板段（<2 家已放行 422 明说无可比） | `compare/{model,builder}.py` + `service/compare.py` + `app/routers/{tasks,panel}.py` |
 | 服务层 | 任务执行 = Task（本期×多竞品） | ✅ Phase 7 `ServiceRunner.execute_task`：逐 run 执行、**run 级失败隔离**、终态 completed/partial/failed + 聚合 summary | `service/{runner,store,schemas}.py` |
 | 服务层 | trace 计数链收口 | ✅ Phase 7：RunMeta.trace + TaskMeta.summary.chains（采集 N→去重 M→diff K + verdict + gate_problems + inbox） | `service/schemas.py` / `service/runner.py` |
 | 服务层 | 告警 Notifier | ✅ Phase 7：high_threat / human_inbox / run_failed → Mock 落台账（默认离线）；Webhook 壳空 url fail-fast、deliver 抛 NotImplemented（真 HTTP 推送接入期） | `service/notifier.py` + `config alerts.webhook_url` |
@@ -160,8 +166,15 @@ flowchart LR
 > 终态不可覆盖、note = 只备注不销案；by/note/resolved_at 审计落 run.human_inbox）；`published_view` 把 draft 按
 > resolution 过滤成 published / held / dismissed（PASS 全自动发布、未放行/带 note 挂 held、dismissed 进审计剔除区）。
 > `app/routers/panel.py` 零构建 HTML 面板（收件箱 放行/驳回/备注 按钮 + 发布视图 + 告警可视化，原生 JS 调同款
-> JSON API）。main 0.8.0；全 mock 下 **165 测试全绿**（144 基线 + eval 15 + panel API 6）。
-> ——**不宣称已连真实网络 / 已产出 LLM 情报 / 已能语义判同 / 已真推告警 / eval 数字=真实世界表现**：真实 adapter 与
+> JSON API）。main 0.9.0；全 mock 下 **180 测试全绿**（144 基线 + eval 15 + panel API 6 + 横向对比 15）。
+> 增量交付口径 = **跨竞品横向对比**：把"单竞品各交各的周报"升级为"同 Task 里横着看"。`compare/`（model+builder）
+> 吃发布视图的**已放行**条目，产出 competitor 雷达列头 + dimension 行 + derived（全员动作维度 / 单边动作维度 /
+> 率先维度计数）。确定性：竞品按 id 规范化、行按 Dimension 声明序、格内 (first_seen,fp,title) 稳定排序、雷达一律
+> 由 items 重算；`service/compare.py` 映射发布视图 → build，GET /tasks/{id}/compare 输出（<2 家已放行 422），面板 task
+> 页加横向对比表（★ 先行方）。实测（真实 W35 批量 Task，两竞品 PASS 全自动发布）：feature 双竞品都动、
+> bi 先动（最早 08-24 < crm 08-25）；market 仅 bi（盘点 = 单边动作）；雷达/维度覆盖并列如实。
+> ——**不宣称已连真实网络 / 已产出 LLM 情报 / 已能语义判同 / 已真推告警 / eval 数字=真实世界表现 / 横向对比=实体等价**：
+> 真实 adapter 与
 > 跨竞品 fan-out 在接入期；Webhook 是占位壳（真 HTTP 推送接企微/飞书/邮件要真实 endpoint/key，属接入期）；
 > Eval-Harness 是**固定语料回归基线**（gold 7 事件 + 6 对抗场景是"编得动的口径"，不是真实世界命中率；
 > duplicate 为门卫级而非图级，见 docs/eval.md §4）；LLM 语义补分级（异词同威胁）与 Reviewer 的
@@ -172,7 +185,7 @@ flowchart LR
 
 ```
 competition-watch-engine/
-├─ app/main.py            # FastAPI 入口：GET / /health + 业务路由（version 0.8.0，Phase 8 含面板）
+├─ app/main.py            # FastAPI 入口：GET / /health + 业务路由（version 0.9.0，Phase 8 含面板 + 横向对比）
 ├─ config/config.yaml     # 业务参数（全参数占位）
 ├─ config/settings.py     # pydantic 强类型 + fail-fast（dashscope 无 key 即报错）
 ├─ llm/                   # Provider 抽象：base / mock_provider / dashscope_provider(壳) / get_provider
@@ -195,12 +208,16 @@ competition-watch-engine/
 ├─ analyst/                # Phase 5：rubric(规则阶梯: 先命中先定级 + 理由链) / classifier(Analyst.grade → write_items)
 ├─ writer/                 # Phase 5：report(WeeklyReport/ReportItem 模型自校验) / service(Writer.build 只组装不发挥)
 ├─ reviewer/               # Phase 6：gate(Reviewer.review → typed problems: grounding/矛盾/合规) / problems(代码+路由表)
+├─ compare/                # 增量横向对比：model(CompetitorView/CrossCompareReport 结构) / builder(build 纯函数：
+│  │                       #          维度轴对齐≠实体对齐；已放行条目对齐 + first_mover/单边/雷达并列，确定性)
 ├─ service/                # Phase 7+8：schemas(Task/Run/Alert 契约) / store(TaskStore 文件即状态+告警台账)
 │  │                       #          / runner(execute_task: run 级隔离+计数链收口+告警) / notifier(Mock/Webhook)
 │  │                       #          / scheduler(weekly_report cron 注册) / publish(Phase 8: resolution
-│  │                       #          语义 + published_view 发布视图过滤) / context(ServiceContext 依赖)
+│  │                       #          语义 + published_view 发布视图过滤) / compare(增量: compare_view 横向对比)
+│  │                       #          / context(ServiceContext 依赖)
 │  └─ __init__.py          # 导出 build_service_context/ServiceRunner/run_now/MockNotifier/WebhookNotifier 等
-├─ app/routers/            # Phase 7+8：deps(get_service_ctx) / tasks(+/{id}/published) / inbox(+resolve) / alerts / panel
+├─ app/routers/            # Phase 7+8：deps(get_service_ctx) / tasks(+/{id}/published +/{id}/compare) / inbox(+resolve)
+│  │                       #          / alerts / panel（task 页含横向对比段，★ 先行方）
 ├─ eval/                   # Phase 8：dataset(gold 真值/去重重复组) / adversarial(6 对抗场景+毒化 writer)
 │  │                       #          / metrics(六指标纯函数) / harness(EvalHarness 三面回放+render_markdown)
 │  └─ run.py               # check_gates 门禁 + python -m eval.run CLI（写 data/eval/eval_report.{json,md}，fail=1）
@@ -215,7 +232,8 @@ competition-watch-engine/
 ├─ docs/reviewer.md        # Reviewer 审稿门卫（Phase 6）
 ├─ docs/service.md         # 服务层：任务/定时/告警/健壮性 + 人工放行闭环/发布视图/面板（Phase 7+8）
 ├─ docs/eval.md            # Eval-Harness 回放评测：三面六指标 + 对抗表 + 口径声明 + 门禁（Phase 8）
-└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph/analyst_rubric/writer_report/reviewer_gate/service_runtime/service_api/eval/panel_api
+├─ docs/compare.md         # 跨竞品横向对比：口径/边界（维度≠实体）/实测（增量）
+└─ tests/                  # health/mock_provider/mock_source/schema/fingerprint/store/factory/corpus/collectors/dedupe/diff/orchestration_graph/analyst_rubric/writer_report/reviewer_gate/service_runtime/service_api/eval/panel_api/compare_builder/compare_api
 ```
 `data/memory/`（运行产物，gitignored）：json 后端 = `fact_cards|snapshots/{竞品}/{period}.json`；sqlite = `memory.db`。
 `data/service/`（运行产物，gitignored）：`tasks/{task_id}.json`（TaskMeta 文件即状态）+ `alerts.json`（告警台账）。
@@ -232,8 +250,8 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph + fastapi + uvicorn + apscheduler）
-uv run pytest                # 全绿（Phase 8 = 165）
-uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts + /panel（0.8.0）
+uv run pytest                # 全绿（Phase 8 + 增量横向对比 = 180）
+uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts + /panel（0.9.0）
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
 # 去重 + 跨期 diff 验证：见 docs/memory.md §6（dedupe W35 5→3，diff adds=3）
@@ -242,6 +260,7 @@ uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + 
 # 门卫验证：见 docs/reviewer.md §8（注入 6 类假事件全拦 6/6、真实 W35 0 误拦；打回有 trace）
 # 服务层验证：见 docs/service.md §10（POST /tasks 计数链 + /report + /inbox + /alerts；故障演练 A/B；每周一 09:00 cron）
 # 评测验证：见 docs/eval.md §7（uv run python -m eval.run → 三面六指标 + 门禁；fail 退出码 1）
+# 横向对比验证：POST /tasks 跑 W35 双竞品 → GET /tasks/{id}/compare（feature 双动 + bi 先动 + market 单边）；见 docs/compare.md
 ```
 
 ---
@@ -254,3 +273,4 @@ _更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 
 2026-09-04 更新（Phase 6：Reviewer 行 ✅ 拆成 reviewer 包、LangGraph 行 4–6、目录骨架加 reviewer 模块与 docs/reviewer.md、pytest 110→123、交付口径补 Phase 6）。
 2026-09-04 更新（Phase 7：服务层行 ✅、任务/报告/告警 API 与 APScheduler 行 ✅、Reporter/Alert 行拆出（Alert 归 service/notifier）、目录骨架加 service 与 app/routers 模块、docs/service.md、pytest 123→144、交付口径补 Phase 7）。
 2026-09-04 更新（Phase 8：Eval 行 ✅（reporter/publisher 拆成占位）、人工放行闭环/发布视图/简单面板行 ✅、FastAPI version 0.7.0→0.8.0、目录骨架 eval/ 转实 + service/publish.py + app/routers/panel.py + docs/eval.md、pytest 144→165、交付口径补 Phase 8、沿革/不宣称段落补 P8 边界）。
+2026-09-04 更新（增量横向对比：跨竞品横向对比行 ✅、FastAPI version 0.8.0→0.9.0、目录骨架加 compare/ 包 + service/compare.py + app/routers compare 路由/面板段 + docs/compare.md、pytest 165→180、沿革/不宣称段落补"横向对比≠实体等价"边界）。

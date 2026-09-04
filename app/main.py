@@ -3,7 +3,8 @@
 
 - app.state.service：ServiceContext（settings + TaskStore + Notifier + Runner），routers 经依赖注入读取；
 - schedule.enabled=true 时 lifespan 启动 APScheduler 每周巡检（单进程长跑服务定位）；默认关、离线可测。
-版本对齐：0.1.0(Phase0) → 0.7.0(Phase7 服务化) → 0.8.0(Phase8 人工放行闭环 + 简单面板)。
+版本对齐：0.1.0(Phase0) → 0.7.0(Phase7 服务化) → 0.8.0(Phase8 人工放行闭环 + 简单面板) →
+0.9.0(增量：跨竞品横向对比)。
 """
 from __future__ import annotations
 
@@ -36,9 +37,9 @@ app = FastAPI(
     title="competition-watch-agent",
     description=(
         "竞观 Agent：竞品信号 MultiAgent 情报流水线（先审后发、可溯源、能答'本周变了什么'）。"
-        "Phase 8：人工放行闭环 + 发布视图 + 简单面板。"
+        "Phase 8：人工放行闭环 + 发布视图 + 简单面板 + 增量跨竞品横向对比。"
     ),
-    version="0.8.0",
+    version="0.9.0",
     lifespan=lifespan,
 )
 app.state.service = _service_ctx

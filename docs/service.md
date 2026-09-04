@@ -1,4 +1,4 @@
-# 服务层：任务 / 定时 / 告警 / 健壮性 + 人工放行闭环 / 发布视图 / 简单面板（Phase 7+8）
+# 服务层：任务 / 定时 / 告警 / 健壮性 + 人工放行闭环 / 发布视图 / 简单面板 / 跨竞品横向对比（Phase 7+8 + 增量）
 
 > Phase 7 交付（README2 §5.9 定时与告警 + §5.10 服务层健壮性与观测 / §7.4 row 7）：
 > 把 Phase 4–6 已跑通的单条流水线（`run_cycle`），包成**一次"本期巡检" = 一个 Task** 的服务层
@@ -10,9 +10,12 @@
 > （`published_view` 把周报 draft 按 resolution 过滤成 published/held/dismissed）+ **简单面板**
 > （`app/routers/panel.py` 零构建 HTML：放行/驳回/备注按钮 + 发布视图 + 告警可视化）。
 > 验收：接口全套 + 定时/告警可演示 + 故障演练（P7）+ 人工闭环/发布过滤/面板可演示 + 评测门禁（P8）。
-> **165 测试全绿**（144 基线 + eval 15 + panel API 6：`tests/test_panel_api.py`）。
+> 增量「跨竞品横向对比」（README2 路线图之后，自主增量）：在 Phase 8 发布视图之上加**横着看**——
+> `compare/` 纯函数（已放行条目按 dimension 轴对齐，**维度对齐 ≠ 实体对齐**）+
+> `service/compare.py`（compare_view）+ `GET /tasks/{id}/compare`（<2 家已放行 422）+ 面板横向对比段。
+> **180 测试全绿**（144 基线 + eval 15 + panel API 6 + 横向对比 15：`tests/test_compare_{builder,api}.py`）。
 > 编排与门卫内部口径见 [`docs/orchestrator.md`](orchestrator.md) / [`docs/reviewer.md`](reviewer.md)，
-> 评测口径见 [`docs/eval.md`](eval.md)。
+> 评测口径见 [`docs/eval.md`](eval.md)，横向对比口径见 [`docs/compare.md`](compare.md)。
 
 ---
 
@@ -109,7 +112,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 > 会真触发到**周二**。`test_weekly_cron_fires_monday_0900` 从 config 读值 + 走真注册路径断言下个触发点
 > = 每周一 09:00，防静默漂移。
 
-## 6. HTTP 接口（app/routers + main 0.8.0，Phase 7+8）
+## 6. HTTP 接口（app/routers + main 0.9.0，Phase 7+8 + 增量）
 
 | 方法/路径 | 作用 | 返回 |
 |---|---|---|
@@ -118,6 +121,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 | `GET /tasks/{id}` | Task 详情（404 = 不存在） | TaskMeta |
 | `GET /tasks/{id}/report` | 合规周报：各 done run 从 pipeline json 合并全量 draft（headline/sections/items/sources + threat_radar + trace） | report[] |
 | `GET /tasks/{id}/published` | **发布视图（Phase 8）**：把周报 draft 按人工 resolution 过滤成 published / held / dismissed（先审后发闭环的可复核快照，逻辑在 service/publish） | published_total/held_total/dismissed_total + runs[] |
+| `GET /tasks/{id}/compare` | **跨竞品横向对比（增量）**：消费发布视图，把 ≥2 家有已放行条目的 run 按 dimension 轴对齐（维度对齐≠实体对齐，逻辑在 compare/ + service/compare）；task 不存在 404、<2 家已放行 422 + reason | CrossCompareReport（competitors/rows/both_moved_dims/single_moved_dims/first_move_counts） |
 | `GET /inbox` | 人工收件箱：**只有 verdict=human 的 run** 的 human_inbox 条目；`?status=pending\|all\|resolved`（缺省 pending = 只看未处理）；每条带稳定 `entry_id = {run_id}#{seq}` | count + status_filter + entries[] |
 | `POST /inbox/resolve` | **人工定案（Phase 8）**：{entry_id, action: release\|dismiss\|note, by, note?} → release/dismiss = 销案终态、note = 只备注不销案；404 未知条目、409 已定案不可覆盖、422 格式/字段非法 | resolved + entry（含 status + resolution） |
 | `GET /alerts` | 告警台账倒序（最新在前） | count + alerts[] |
@@ -127,7 +131,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 
 `main.py` 挂 `app.state.service = build_service_context()`（settings + TaskStore + Notifier + Runner
 捏成一个依赖）；routers 经 `get_service_ctx` 读。`schedule.enabled=true` 时 lifespan 启动 scheduler。
-版本 `0.8.0`。健康检查 `/health` 保持 Phase 0 契约不变。
+版本 `0.9.0`。健康检查 `/health` 保持 Phase 0 契约不变。
 
 ### Phase 8 补：resolution 语义 / 发布视图 / 简单面板（service/publish.py）
 
@@ -146,6 +150,20 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 - **简单面板**（零构建，不引前端框架/打包器）：服务端直出 HTML + 原生 JS，**只做"把 service 层 JSON 渲染成
   HTML + 点按钮调回同款 JSON API"**，路由薄、逻辑全在 `service/publish` + TaskStore。测试只断言 200 + 关键
   文本标记（待办/entry_id/发布视图/放行按钮），不测浏览器行为。
+
+### 增量补：跨竞品横向对比（service/compare.py + compare/，详见 docs/compare.md）
+
+- **compare_view(task_store, settings, task_id)**：调 published_view 只取各 run **已放行（published）** 条目 →
+  过滤出 ≥1 条已放行的 run → 映射 `CompetitorView` → `compare.builder.build`。先审后发纪律延续到对比层：
+  被门卫转人工、仍挂起（held）或人工驳回（dismissed）的条目不进横向视图——不会拿"审后剔除的假货"误导横向判断。
+- **为什么横向对比的输入是发布视图而不是全量 draft**：横向视图面向"已确认能发出去的内容"，假事件在人工关就应
+  被掐断；放行后剩下的才是可以横着比的东西。
+- **422 的诚实边界**：<2 家有已放行条目的竞品 → `CompareNotPossible`（路由 422 + reason）——单竞品 / 全挂起 /
+  全剔除则没有"横向"可言，宁可明说不比，不硬凑一份单边报告。
+- **确定性**：输出 = `build(发布视图)` 的纯派生 JSON，不落盘、不带时间戳（generated_at=None）→ 同状态同输入
+  逐字节相等（HTTP 重复 GET 可复测，`tests/test_compare_api.py` 锁死）。
+- **对齐语义**（灵魂，面试必讲）：维度对齐 ≠ 实体对齐；first_mover 比同维度最早 first_seen（同日并列、单边独占
+  即它、无日期证据 orderable=False 不断言）；高威胁条数并列呈现不跨竞品排危险序。
 
 ## 7. 健壮性：run 级失败隔离 + 故障演练
 
@@ -177,6 +195,10 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
    健康竞品的高威胁信号（那正是要告警的东西）。partial + 逐 run 状态是最小诚实呈现。
 6. **为什么 release/dismiss 终态不可覆盖、note 只备注不销案**：人工定案是**审计事件**，改判 = 覆盖审计记录
    （409）；备注是"还想再想想"的中间态，不该把"我还没定"悄悄算成"已放行"——发布视图宁挂 held 也不误发。
+7. **为什么横向对比吃"已放行条目"且维度轴对齐不碰实体**：横向视图是给"已确认可发内容"做横着比的，假条目在
+   人工关就被掐，不让它进对比误导判断（先审后发纪律延续）；`dimension` 是共享枚举，对齐只到维度轴——
+   "A 的 v12 == B 的图表库 3.0"要实体级等价（语义/embedding，更后续），本层不发明同一竞赛的假象；
+   无 first_seen 日期证据宁可不说先后（orderable=False），severity 只并列不跨竞品排危险序。
 
 ## 9. 局限与边界（诚实口径，别把 P7/P8 说成生产级平台）
 
@@ -191,20 +213,24 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 - **评审评测是固定语料回归基线**：Eval-Harness 的数字（gold 7/7、对抗 6/6 等）只证明"造的固定场景里流水线
   稳定做到设计该做的"，**不是真实世界表现**（详见 docs/eval.md §6）；P7 的 trace/radar 数字为实测（非编造）。
 - **README2 里的目标指标（如告警延迟、覆盖率）仍是设计目标占位**；本期实测口径只有上面测试锁死的部分
-  （service 21 + panel 6 + eval 15 条）。
+  （service 21 + panel 6 + eval 15 + compare 15 条）。
+- **横向对比不做实体对齐**：GET /tasks/{id}/compare 的 first_mover 是"该维度本期动作时间先后"（维度对齐），
+  不宣称 A 的某功能 == B 的某功能；实体级等价需语义实体解析 / embedding（更后续，不上简历）。single_moved 是
+  "只有一家动"的事实陈述，不自动译成"对方是盲点"。severity 只并列计数（docs/compare.md §3/§8）。
 
 ## 10. 运行与验证
 
 ```bash
 uv sync
-uv run pytest                       # 全绿（Phase 8 = 165：基线 144 + eval 15 + panel 6）
-uv run pytest tests/test_service_runtime.py tests/test_service_api.py tests/test_panel_api.py -v
-uv run uvicorn app.main:app --port 8000   # 服务化 HTTP（0.8.0，含 /panel）
+uv run pytest                       # 全绿（Phase 8 + 增量 = 180：基线 144 + eval 15 + panel 6 + compare 15）
+uv run pytest tests/test_service_runtime.py tests/test_service_api.py tests/test_panel_api.py tests/test_compare_api.py -v
+uv run uvicorn app.main:app --port 8000   # 服务化 HTTP（0.9.0，含 /panel）
 # 跑一次"本期巡检"（单竞品调试 / 缺省 = 全部竞品 + 最近已结束 ISO 周）：
 curl -s -X POST localhost:8000/tasks -H 'Content-Type: application/json' -d '{"period":"2026-W35","competitor_id":"crm_alpha"}'
 curl -s localhost:8000/tasks                 # 任务列表（含 trace 计数链 + 门卫判定）
 curl -s localhost:8000/tasks/<task_id>/report # 合规周报全量 draft
 curl -s localhost:8000/tasks/<task_id>/published   # 发布视图：published/held/dismissed（PASS run = 全发布）
+curl -s localhost:8000/tasks/<task_id>/compare     # 跨竞品横向对比（feature 双动 + bi 先动 + market 单边；单竞品 422）
 curl -s localhost:8000/inbox                 # 人工收件箱（PASS 时为空；?status=all|resolved 可切）
 curl -s localhost:8000/alerts                # 告警台账（真实 W35 有 high → high_threat）
 curl -s -X POST localhost:8000/alerts/hook -H 'Content-Type: application/json' \
@@ -220,7 +246,9 @@ curl -s localhost:8000/panel/task/<task_id>   # 单任务：放行/驳回/备注
 bi {1,1,2}；全 PASS、收件箱空、gate_trace=1；每竞品触发 1 条 high_threat 告警；发布视图 = 全自动发布
 （published 3+4、held/dismissed 0）。演练 A（run 挂）→ Task partial + run_failed 告警；演练 B（注入假事件）→
 human + inbox + human_inbox 告警，`POST /inbox/resolve` release → 该条目从 held 进 published（human_released=true）、
-dismiss → 进 dismissed 审计区（`tests/test_panel_api.py` 锁死）。
+dismiss → 进 dismissed 审计区（`tests/test_panel_api.py` 锁死）。横向对比（同一批量 W35 Task）：feature 双竞品
+都动、**bi 先动**（最早 first_seen 08-24 < crm 08-25）、market 仅 bi（单边动作维度）；bi radar {1,1,2} / crm
+{1,1,1} 并列如实；重复 GET 逐字节一致（`tests/test_compare_api.py` 锁死）。
 数据全隔离在 `data_dir`：测试用 `build_service_context(data_dir=tmp)`，两个 ctx 互不写穿。
 
 ---
@@ -231,3 +259,6 @@ Mock/Webhook 告警、每周一 09:00 cron（名字 mon 免 APScheduler 数值�
 2026-09-04 更新（Phase 8：service/publish.py（resolution 语义 + published_view 发布视图过滤）+
 app/routers inbox resolve + tasks/{id}/published + panel；main 0.7.0→0.8.0；HTTP 表加 Phase 8 端点 +
 §6 闭环小节；§8 决策补第 6 条；§9 局限删"resolution 未做"、补 P8 诚实边界；144→165 测试（eval 15 + panel 6））。
+2026-09-04 更新（增量横向对比：compare/ 纯函数 + service/compare.py（compare_view）+ GET /tasks/{id}/compare
++ 面板横向对比段；main 0.8.0→0.9.0；HTTP 表/标题/§6 补增量小节、§8 决策补第 7 条、§9 局限补"不做实体对齐"；
+165→180 测试（compare 15：builder 9 + api 6）；横向对比口径见 docs/compare.md）。
