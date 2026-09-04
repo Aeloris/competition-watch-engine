@@ -12,8 +12,9 @@ README2 §7.4 row 8"简单面板收件箱人工放行"落地，三个纯 service
    - `release`：放行 —— 该条目对应的周报条目进入发布视图（human 复核认可）；
    - `dismiss`：驳回 —— 对应条目从发布视图剔除（人工认定是噪音/误报）；
    - `note`：备注 —— 只留批注，**不销案**（仍 pending，提醒还在）。
-   幂等写回：改 `run.human_inbox[seq]["resolution"]` 后经 task_store.add_run(run_id 幂等) 落盘，
-   不动 run 顺序 → entry_id 稳定可复用；已终态的条目再处理 → 409（不许静默覆盖审计决定）。
+   幂等写回：改 `run.human_inbox[seq]["resolution"]` 后经 task_store.update_run（锁内 读-改-写，
+   先重判终态再原位替换该 run，顺序不动 → entry_id 稳定可复用）落盘；并发定案同一收件箱条目，
+   后到者在锁内看到先手已定案 → 409（不许静默覆盖审计决定）。
 
 3. **published_view**：给定 Task，把每个 done run 的周报 draft 按 resolution 过滤成**发布视图**：
    - 未被任何门卫问题指向的条目 → 自动发布（自审通过，human_released=false）；
@@ -124,7 +125,7 @@ def resolve_inbox_entry(
     by: str,
     note: str = "",
 ) -> dict:
-    """人工对一条待办定案：写回 resolution 并经 add_run 幂等落盘；返回定案后的条目视图。
+    """人工对一条待办定案：锁内写回 resolution（update_run 幂等覆盖该 run）；返回定案后的条目视图。
 
     Raises:
         ValueError: action 非法 / by 为空（路由通常已被 pydantic Literal/min_length 拦成 422）。
@@ -137,19 +138,25 @@ def resolve_inbox_entry(
         raise ValueError("by（处理人）不能为空——人工定案必须可追责")
 
     run_id, seq = parse_entry_id(entry_id)
-    task, run = _task_containing_run(task_store, run_id)
-    if not (0 <= seq < len(run.human_inbox)):
-        raise EntryNotFound(f"箱内序号 {seq} 不存在（run {run_id}，共 {len(run.human_inbox)} 条）")
+    task, _ = _task_containing_run(task_store, run_id)  # 只反查 task_id；权威校验放在锁内 update_run
 
-    entry = run.human_inbox[seq]
-    existing = entry.get("resolution")
-    if existing and existing.get("action") in TERMINAL_ACTIONS:
-        raise EntryAlreadyResolved(existing["action"], existing.get("by", ""), existing.get("resolved_at", ""))
+    def _mutate(run):
+        """锁内对**最新快照**重做终态判定再写 resolution——两线程并发定案同一条目时，
+        后到者在锁内读到先手已落盘的 resolution → 抛 EntryAlreadyResolved（409），
+        不会静默覆盖先手审计决定（旧实现在锁外先判终态 = TOCTOU 竞态）。"""
+        if not (0 <= seq < len(run.human_inbox)):
+            raise EntryNotFound(f"箱内序号 {seq} 不存在（run {run_id}，共 {len(run.human_inbox)} 条）")
+        existing = run.human_inbox[seq].get("resolution")
+        if existing and existing.get("action") in TERMINAL_ACTIONS:
+            raise EntryAlreadyResolved(existing["action"], existing.get("by", ""), existing.get("resolved_at", ""))
+        run.human_inbox[seq]["resolution"] = {"action": action, "by": by, "note": note or "",
+                                              "resolved_at": utc_now_iso()}
+        return run
 
-    entry["resolution"] = {"action": action, "by": by, "note": note or "",
-                           "resolved_at": utc_now_iso()}
-    updated = task_store.add_run(task.task_id, run)  # 按 run_id 幂等覆盖该 run，顺序不动 → entry_id 稳定
-    run2 = next(r for r in updated.runs if r.run_id == run_id)
+    try:
+        updated, run2 = task_store.update_run(task.task_id, run_id, _mutate)
+    except KeyError as exc:  # 扫描后 run 被并发移除/已不在该 task → 视图层按 404 处理
+        raise EntryNotFound(f"run {run_id} 不存在于 task {task.task_id}") from exc
     return _entry_view(updated, run2, seq, run2.human_inbox[seq])
 
 

@@ -89,7 +89,8 @@ class DedupeSummary(BaseModel):
     period: str
     cards_in: int = 0
     events_out: int = 0
-    merges: int = 0  # cards_in - events_out = 被合并吸收掉的重发
+    merges: int = 0            # cards_in - events_out - skipped_empty_title = 被合并吸收掉的重发
+    skipped_empty_title: int = 0  # 无标题卡（Event.title ≥1 无法成事件）：丢卡不崩、单独计数可见
 
 
 def _cluster_to_event(cl: _Cluster) -> Event:
@@ -128,7 +129,14 @@ def merge_to_events(
     """
     aliases = aliases or {}
     clusters: list[_Cluster] = []
+    skipped_empty_title = 0
     for card in sorted(cards, key=lambda c: (c.published_at.isoformat(), c.source_url)):
+        # 无标题卡（normalize 后一个字母数字都不剩）：成不了可报告事件——Event.title 强制 ≥1，
+        # 且指纹/版本锚/近原文聚类都依赖标题。丢卡并计数，绝不把 Event(title="") 抛给下游
+        # 让整条 run 因 pydantic ValidationError 崩掉（BUG-2 回归）。
+        if not normalize_title(card.title):
+            skipped_empty_title += 1
+            continue
         dim = classify_dimension(card.title, card.summary)
         anchor = version_anchor(card.title)
         norm = normalize_title(card.title)
@@ -156,7 +164,8 @@ def merge_to_events(
         period=period,
         cards_in=len(cards),
         events_out=len(events),
-        merges=len(cards) - len(events),
+        merges=len(cards) - len(events) - skipped_empty_title,
+        skipped_empty_title=skipped_empty_title,
     )
     return events, summary
 

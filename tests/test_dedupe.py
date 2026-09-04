@@ -16,6 +16,7 @@ from dedupe import (
     version_anchor,
 )
 from memory import Dimension, build_period_cards, list_competitors
+from memory.schemas import FactCard
 
 MOCK_DIR = get_settings().fixtures_path / "sources"
 FETCHED_AT = datetime(2026, 8, 31, 9, 0, 0)
@@ -143,6 +144,28 @@ def test_events_have_fp_id_and_min_one_evidence():
                 assert e.id and len(e.id) == 16
                 assert len(e.evidence_urls) >= 1
                 assert e.evidence_urls == sorted(e.evidence_urls)  # 证据升序 → 可溯源确定
+
+
+def test_empty_title_card_skipped_without_crash():
+    """BUG-2 回归：collector 混进无标题卡（title=""，仅 summary 有字）曾让合并产出
+    Event(title="") → Event.title 强制 ≥1 → pydantic ValidationError，整条 run 崩。
+    现在丢卡并计数（skipped_empty_title），真事件照常产出、计数链闭合：cards=事件+跳过+合并。"""
+    cards = [
+        FactCard(competitor_id="crm_alpha", source_url="https://a.example.com/v12",
+                 title="Alpha CRM v12.0 发布：智能跟进助手 GA", summary="官网博客正文……",
+                 published_at=datetime(2026, 8, 25, 8, 0, 0), fetched_at=FETCHED_AT),
+        FactCard(competitor_id="crm_alpha", source_url="https://b.example.com/blank",
+                 title="", summary="一条无标题抓取，正文有内容但缺标题",
+                 published_at=datetime(2026, 8, 26, 9, 0, 0), fetched_at=FETCHED_AT),
+        FactCard(competitor_id="crm_alpha", source_url="https://c.example.com/blank",
+                 title="  ", summary="另一条无标题卡（全空白标题也不放行）",
+                 published_at=datetime(2026, 8, 26, 10, 0, 0), fetched_at=FETCHED_AT),
+    ]
+    events, summ = merge_to_events(cards, period="2026-W35", aliases=ALIASES)
+    assert len(events) == 1 and events[0].title.startswith("Alpha CRM v12.0")
+    assert summ.cards_in == 3 and summ.events_out == 1
+    assert summ.skipped_empty_title == 2
+    assert summ.merges == 0                    # 3 卡 = 1 事件 + 2 跳过（无真实重发被吸收）
 
 
 def test_merge_is_replayable_deterministic():

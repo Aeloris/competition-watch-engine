@@ -19,6 +19,10 @@ from pathlib import Path
 
 # 单进程内写文件锁：append_alert 的"读-改-写"与并发 deliver 互斥（FastAPI 线程池并发下防丢写）
 _alert_lock = threading.Lock()
+# task 文件（add_run/finalize/update_run）的"读-改-写"整段互斥：并发下防两个线程各读旧快照、
+# 各自写回 → 后写覆盖先写（丢 run / 丢终态 / 静默覆盖审计决定）。单全局锁：本存储规模小，
+# 正确性优先，不同 task 间串行也可接受（与 _alert_lock 各管各的文件，互不交叉）。
+_task_lock = threading.Lock()
 _tmp_seq = itertools.count()
 
 from service.schemas import RunMeta, TaskMeta, TaskStatus
@@ -83,22 +87,26 @@ class TaskStore:
         _atomic_write_json(self._task_path(meta.task_id), meta.as_dict())
 
     def add_run(self, task_id: str, run: RunMeta) -> TaskMeta:
-        """把一次 run 的结果记进 Task（顺序执行：追加即终态）。返回更新后的 Task。"""
-        meta = self.get_task(task_id)
-        if meta is None:
-            raise KeyError(f"task {task_id} 不存在")
-        # 同名 run_id 重复记则**原位覆盖**（幂等防重放）；否则追加。
-        # 注意不能写成"去重后追加到尾部"——那会把重跑记录挪到末尾，打乱 runs 与真实执行顺序的对应
-        runs = list(meta.runs)
-        for i, r in enumerate(runs):
-            if r.run_id == run.run_id:
-                runs[i] = run
-                break
-        else:
-            runs.append(run)
-        meta.runs = runs
-        self._save(meta)
-        return meta
+        """把一次 run 的结果记进 Task（顺序执行：追加即终态）。返回更新后的 Task。
+
+        锁内 读-改-写：与 finalize/update_run 互斥，FastAPI 线程池并发下防丢 run（见 _task_lock）。
+        """
+        with _task_lock:
+            meta = self.get_task(task_id)
+            if meta is None:
+                raise KeyError(f"task {task_id} 不存在")
+            # 同名 run_id 重复记则**原位覆盖**（幂等防重放）；否则追加。
+            # 注意不能写成"去重后追加到尾部"——那会把重跑记录挪到末尾，打乱 runs 与真实执行顺序的对应
+            runs = list(meta.runs)
+            for i, r in enumerate(runs):
+                if r.run_id == run.run_id:
+                    runs[i] = run
+                    break
+            else:
+                runs.append(run)
+            meta.runs = runs
+            self._save(meta)
+            return meta
 
     def finalize(
         self,
@@ -108,24 +116,28 @@ class TaskStore:
         summary: dict,
         error: str | None = None,
     ) -> TaskMeta:
-        """跑完全部 run 后定 Task 终态：completed / partial / failed。"""
-        meta = self.get_task(task_id)
-        if meta is None:
-            raise KeyError(f"task {task_id} 不存在")
-        done = [r for r in meta.runs if r.status.value == "done"]
-        failed = [r for r in meta.runs if r.status.value == "failed"]
-        if not meta.runs or len(failed) == len(meta.runs):
-            status = TaskStatus.failed
-        elif failed:
-            status = TaskStatus.partial
-        else:
-            status = TaskStatus.completed
-        meta.status = status
-        meta.finished_at = finished_at
-        meta.summary = summary
-        meta.error = error
-        self._save(meta)
-        return meta
+        """跑完全部 run 后定 Task 终态：completed / partial / failed。
+
+        锁内 读-改-写：与并发 add_run（追加新 run）互斥，防 finalize 读旧快照把刚加的 run 覆盖丢。
+        """
+        with _task_lock:
+            meta = self.get_task(task_id)
+            if meta is None:
+                raise KeyError(f"task {task_id} 不存在")
+            done = [r for r in meta.runs if r.status.value == "done"]
+            failed = [r for r in meta.runs if r.status.value == "failed"]
+            if not meta.runs or len(failed) == len(meta.runs):
+                status = TaskStatus.failed
+            elif failed:
+                status = TaskStatus.partial
+            else:
+                status = TaskStatus.completed
+            meta.status = status
+            meta.finished_at = finished_at
+            meta.summary = summary
+            meta.error = error
+            self._save(meta)
+            return meta
 
     def list_tasks(self) -> list[TaskMeta]:
         if not self._tasks_dir.exists():
@@ -138,6 +150,30 @@ class TaskStore:
                 continue
         metas.sort(key=lambda m: m.created_at, reverse=True)
         return metas
+
+    def update_run(self, task_id: str, run_id: str, mutator) -> tuple[TaskMeta, RunMeta]:
+        """对 task 内某个 run 做**锁内 读-改-写**：读最新快照 → mutator(run) → 原位替换保存。
+
+        场景：人工定案（publish.resolve_inbox_entry）需"读到最新 resolution → 判是否已终态 →
+        写回"整段原子；否则两线程并发定案同一收件箱条目会 TOCTOU——双双读到 pending →
+        后写覆盖前写的审计决定（先手 release 被后手 dismiss 静默改掉）。
+
+        mutator 对传入的 run 就地改并返回 run；抛异常则**不改盘**（EntryNotFound /
+        EntryAlreadyResolved 从锁内直接透传）。run 不在 task → KeyError。
+        """
+        with _task_lock:
+            meta = self.get_task(task_id)
+            if meta is None:
+                raise KeyError(f"task {task_id} 不存在")
+            runs = list(meta.runs)
+            for i, r in enumerate(runs):
+                if r.run_id == run_id:
+                    new_run = mutator(r)
+                    runs[i] = new_run
+                    meta.runs = runs
+                    self._save(meta)
+                    return meta, new_run
+            raise KeyError(f"run {run_id} 不存在于 task {task_id}")
 
 
 # ------------------------------------------------------------ 告警台账

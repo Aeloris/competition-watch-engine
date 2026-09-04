@@ -166,7 +166,8 @@ flowchart LR
 > 终态不可覆盖、note = 只备注不销案；by/note/resolved_at 审计落 run.human_inbox）；`published_view` 把 draft 按
 > resolution 过滤成 published / held / dismissed（PASS 全自动发布、未放行/带 note 挂 held、dismissed 进审计剔除区）。
 > `app/routers/panel.py` 零构建 HTML 面板（收件箱 放行/驳回/备注 按钮 + 发布视图 + 告警可视化，原生 JS 调同款
-> JSON API）。main 0.9.0；全 mock 下 **187 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16）。
+> JSON API）。main 0.9.0；全 mock 下 **190 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 +
+> 审计回归 3：service_runtime 并发锁 ×2、dedupe 空标题丢卡 ×1）。
 > 增量交付口径 = **跨竞品横向对比**：把"单竞品各交各的周报"升级为"同 Task 里横着看"。`compare/`（model+builder）
 > 吃发布视图的**已放行**条目，产出 competitor 雷达列头 + dimension 行 + derived（全员动作维度 / 单边动作维度 /
 > 率先维度计数）。确定性：竞品按 id 规范化、行按 Dimension 声明序、格内 (first_seen,fp,title) 稳定排序、雷达一律
@@ -250,7 +251,7 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph + fastapi + uvicorn + apscheduler）
-uv run pytest                # 全绿（Phase 8 + 增量横向对比 = 187）
+uv run pytest                # 全绿（当前 = 190）
 uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts + /panel（0.9.0）
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）

@@ -21,6 +21,7 @@ bi 5→4→4、radar{high1,med1,low2}（demo 与 §6 口径一致）。
 """
 from __future__ import annotations
 
+import threading
 from datetime import date, datetime
 
 import pytest
@@ -135,6 +136,72 @@ def test_add_run_replaces_in_place_not_moves_to_tail(tmp_path):
     meta = ts.get_task("t")
     assert [r.run_id for r in meta.runs] == ["ra", "rb"]  # 旧实现 → ["rb", "ra"]
     assert meta.runs[0].verdict == "human"
+
+
+def test_store_add_run_concurrent_no_lost_runs(tmp_path):
+    """BUG-1 回归：add_run 是"读旧快照→改→写整份 task 文件"，旧实现无锁——两线程各读快照、
+    各自写回会互相覆盖丢 run。加 _task_lock 后 N 线程并发追加 N 个不同 run_id 一条不丢。"""
+    ts = _ctx(tmp_path).task_store
+    ts.create_task("t", period="2026-W35",
+                   competitors_requested=["crm_alpha", "bi_beta", "cc_gamma", "dd_delta"],
+                   created_at="2026-09-01T09:00:00+00:00")
+    n = 24
+    start = threading.Barrier(n)  # 对齐起跑：让线程尽量同刻读快照（旧实现更易暴露丢写）
+    errs: list[BaseException] = []
+
+    def worker(i: int) -> None:
+        run = RunMeta(run_id=f"r{i:02d}", competitor_id="crm_alpha", period="2026-W35",
+                      status=RunStatus.done, verdict="PASS", trace={"collected": i})
+        start.wait()
+        try:
+            ts.add_run("t", run)
+        except Exception as exc:  # noqa: BLE001 —— 记下任何并发异常
+            errs.append(exc)
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+    assert errs == []
+    meta = ts.get_task("t")
+    assert sorted(r.run_id for r in meta.runs) == [f"r{i:02d}" for i in range(n)]
+    assert all(r.status == RunStatus.done for r in meta.runs)
+
+
+def test_resolve_inbox_entry_concurrent_single_winner(tmp_path):
+    """BUG-1 回归：收件箱定案是"判终态→写回"两段；旧实现锁外先判终态 = TOCTOU，两线程并发
+    处理同一收件箱条目会**双双成功**、后写覆盖先手审计决定。锁内 update_run 后至多一个成功。"""
+    ts = _ctx(tmp_path).task_store
+    ts.create_task("t", period="2026-W35", competitors_requested=["crm_alpha"],
+                   created_at="2026-09-01T09:00:00+00:00")
+    run = RunMeta(run_id="hr1", competitor_id="crm_alpha", period="2026-W35",
+                  status=RunStatus.done, verdict="human",
+                  human_inbox=[{"competitor_id": "crm_alpha", "period": "2026-W35",
+                                "item_index": 1, "fp": "fp-x", "code": "UNSOURCED_URL",
+                                "detail": "证据 URL 无来源", "attempts": 0}])
+    ts.add_run("t", run)
+
+    from service.publish import EntryAlreadyResolved, resolve_inbox_entry
+    start = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def resolve(action: str) -> None:
+        start.wait()
+        try:
+            resolve_inbox_entry(ts, "hr1#0", action=action, by=action)
+            outcomes.append(f"ok:{action}")
+        except EntryAlreadyResolved:
+            outcomes.append(f"409:{action}")
+
+    t1 = threading.Thread(target=resolve, args=("release",))
+    t2 = threading.Thread(target=resolve, args=("dismiss",))
+    t1.start(); t2.start(); t1.join(); t2.join()
+    oks = [o for o in outcomes if o.startswith("ok:")]
+    assert len(oks) == 1                                     # 至多一个成功：绝不双放行双写
+    assert len([o for o in outcomes if o.startswith("409:")]) == 1
+    final = ts.get_task("t").runs[0].human_inbox[0]["resolution"]
+    assert final["action"] == oks[0].split(":", 1)[1]        # 落盘终态 = 胜者，未被后手覆盖
 
 
 # ---------------------------------------------------------------- Notifier 适配层
