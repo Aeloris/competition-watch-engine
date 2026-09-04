@@ -30,7 +30,7 @@ from sources.base import SourceAdapter
 
 SETTINGS = get_settings()
 COMP = "crm_alpha"
-V12_FP = "5c60e045b8853e63"  # fixtures 真值：crm W35 v12.0 发布事件 fp（P3 test_dedupe 锁死）
+V12_FP = "0aa08ae4f389825f"  # fixtures 真值：crm W35 v12.0 发布事件 fp（P3 test_dedupe 锁死）
 
 
 def _store(tmp_path):

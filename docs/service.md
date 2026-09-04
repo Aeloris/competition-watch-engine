@@ -13,8 +13,9 @@
 > 增量「跨竞品横向对比」（README2 路线图之后，自主增量）：在 Phase 8 发布视图之上加**横着看**——
 > `compare/` 纯函数（已放行条目按 dimension 轴对齐，**维度对齐 ≠ 实体对齐**）+
 > `service/compare.py`（compare_view）+ `GET /tasks/{id}/compare`（<2 家已放行 422）+ 面板横向对比段。
-> **206 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 + 审计回归 19：并发锁/空标题丢卡 ×3 +
-> `tests/test_audit_round3.py` ×16——断档守卫/告警隔离/损坏容忍/NFKC 版本锚/period 422/collect_failures/面板转义）。
+> **215 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 + 审计回归 19：并发锁/空标题丢卡 ×3 +
+> `tests/test_audit_round3.py` ×16——断档守卫/告警隔离/损坏容忍/NFKC 版本锚/period 422/collect_failures/面板转义 +
+> 第四轮 `tests/test_audit_round4.py` ×9——SQLite 读容忍/latest_snapshot(up_to=) 回填锚/版本点号撞指纹/collection_gap 过真图）。
 > 编排与门卫内部口径见 [`docs/orchestrator.md`](orchestrator.md) / [`docs/reviewer.md`](reviewer.md)，
 > 评测口径见 [`docs/eval.md`](eval.md)，横向对比口径见 [`docs/compare.md`](compare.md)。
 
@@ -223,7 +224,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 
 ```bash
 uv sync
-uv run pytest                       # 全绿（当前 = 206：基线 149 + eval 15 + panel 7 + compare 16 + 审计回归 19）
+uv run pytest                       # 全绿（当前 = 215：基线 149 + eval 15 + panel 7 + compare 16 + 审计回归 19 + 第四轮 9）
 uv run pytest tests/test_service_runtime.py tests/test_service_api.py tests/test_panel_api.py tests/test_compare_api.py -v
 uv run uvicorn app.main:app --port 8000   # 服务化 HTTP（0.9.0，含 /panel）
 # 跑一次"本期巡检"（单竞品调试 / 缺省 = 全部竞品 + 最近已结束 ISO 周）：
@@ -267,3 +268,8 @@ app/routers inbox resolve + tasks/{id}/published + panel；main 0.7.0→0.8.0；
 runner `_alert` 告警投递失败隔离（不翻案 done / 失败路径不卡 Task）、采集断档 guard（不覆写上期快照 + 记 failed）、
 collect_failures 部分失败上报、POST /tasks period 越界 422 预校验、panel entry_id 改 data-eid 不内联 JS；
 全绿 → 206（本轮新增回归 16：tests/test_audit_round3.py）。计数 = 仓库 pytest 实测，与 README 同源）。
+2026-09-04 更新（全面审计第四轮：SqliteMemoryStore.list_fact_cards/latest_snapshot 读容忍对齐 Json 后端、
+latest_snapshot(up_to=period) 让 dedupe diff 锚钉当前周期（重跑/回填历史周期不被更晚快照污染）、
+normalize_title 保留 '.' 修复版本点号撞指纹（v12.0≠v1.20，快照 set 不再吞发布）、PeriodRunState 声明
+collection_gap（修其过真实 LangGraph 被 `_get_updates` 丢弃）；全绿 → 215（本轮新增回归 9：
+tests/test_audit_round4.py）。两 eval 门禁数字未变全绿。计数 = 仓库 pytest 实测，与 README 同源）。

@@ -47,3 +47,8 @@ class PeriodRunState(TypedDict, total=False):
 
     # —— 旁路计数 ——
     trace: dict                     # {collected: N, merged: M, diff: K}（README2 §5.10 计数链）
+
+    # —— 断档守卫 ——
+    collection_gap: bool            # 本轮采集全部失败且零卡（dedupe_diff 写入）→ runner 据此记 failed，
+                                    # 不拿空周报冒充干净 PASS。**必须在此声明**：LangGraph 只保留 schema 里
+                                    # 声明的 key，节点返回而未声明的 key 会被静默丢弃（`_get_updates` 过滤）。

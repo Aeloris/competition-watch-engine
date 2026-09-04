@@ -88,7 +88,7 @@ def test_version_anchor_extracts_release_identity():
 def test_crm_w35_v12_trio_merges_into_one_with_three_evidences():
     events, summ = _merge("crm_alpha", "2026-W35")
     assert summ.cards_in == 5 and summ.events_out == 3 and summ.merges == 2
-    v12 = [e for e in events if e.fp == "5c60e045b8853e63"]
+    v12 = [e for e in events if e.fp == "0aa08ae4f389825f"]
     assert len(v12) == 1
     e = v12[0]
     assert set(e.evidence_urls) == {

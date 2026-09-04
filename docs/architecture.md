@@ -166,10 +166,12 @@ flowchart LR
 > 终态不可覆盖、note = 只备注不销案；by/note/resolved_at 审计落 run.human_inbox）；`published_view` 把 draft 按
 > resolution 过滤成 published / held / dismissed（PASS 全自动发布、未放行/带 note 挂 held、dismissed 进审计剔除区）。
 > `app/routers/panel.py` 零构建 HTML 面板（收件箱 放行/驳回/备注 按钮 + 发布视图 + 告警可视化，原生 JS 调同款
-> JSON API）。main 0.9.0；全 mock 下 **206 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 +
+> JSON API）。main 0.9.0；全 mock 下 **215 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 +
 > 审计回归 3：service_runtime 并发锁 ×2、dedupe 空标题丢卡 ×1 + 第三轮审计回归 16：tests/test_audit_round3.py——
 > 采集断档不覆写上期快照 ×3、告警投递失败隔离 ×2、损坏容忍+原子写 ×4、版本锚 NFKC+纯品牌名不乱并 ×4、
-> period 422 请求期校验 ×1、collect_failures 可见 ×1、面板 entry_id 不内联 JS ×1）。
+> period 422 请求期校验 ×1、collect_failures 可见 ×1、面板 entry_id 不内联 JS ×1 + 第四轮审计回归 9：
+> tests/test_audit_round4.py——SQLite 读容忍 ×2、latest_snapshot(up_to=) 回填重跑锚定 ×3、版本点号撞指纹
+> （v12.0≠v1.20）×3、collection_gap 过真实 LangGraph ×1）。
 > 增量交付口径 = **跨竞品横向对比**：把"单竞品各交各的周报"升级为"同 Task 里横着看"。`compare/`（model+builder）
 > 吃发布视图的**已放行**条目，产出 competitor 雷达列头 + dimension 行 + derived（全员动作维度 / 单边动作维度 /
 > 率先维度计数）。确定性：竞品按 id 规范化、行按 Dimension 声明序、格内 (first_seen,fp,title) 稳定排序、雷达一律
@@ -253,7 +255,7 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph + fastapi + uvicorn + apscheduler）
-uv run pytest                # 全绿（当前 = 206）
+uv run pytest                # 全绿（当前 = 215）
 uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts + /panel（0.9.0）
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
@@ -280,3 +282,7 @@ _更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 
 2026-09-04 更新（全面审计收尾三轮：TaskStore/告警台账损坏容忍与并发锁、runner 告警投递失败隔离、采集断档不覆写
 上期快照 guard + 记 failed、collect_failures 上报、POST /tasks period 越界 422 预校验、版本锚 NFKC/纯品牌名不乱并、
 panel entry_id 改 data-eid 不内联 JS；pytest 全绿 → 206，本轮新增回归 16：tests/test_audit_round3.py）。
+2026-09-04 更新（全面审计第四轮：SqliteMemoryStore 读容忍对齐 Json 后端、latest_snapshot(up_to=period) 修复重跑/回填
+历史周期被更晚快照污染、normalize_title 保留 '.' 修复版本点号撞指纹（v12.0≠v1.20）、PeriodRunState 声明
+collection_gap 修复其过真实 LangGraph 被丢弃；pytest 全绿 → 215，本轮新增回归 9：tests/test_audit_round4.py；
+两 eval 门禁数字未变全绿）。

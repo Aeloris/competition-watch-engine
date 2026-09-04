@@ -43,7 +43,7 @@ from service.schemas import RunMeta, RunStatus, TaskStatus
 from service.store import read_alerts
 import service.runner as runner_mod
 
-V12_FP = "5c60e045b8853e63"  # fixtures 真值：crm W35 v12.0 发布事件 fp（复用于"真 fp 拼编造 URL"注入）
+V12_FP = "0aa08ae4f389825f"  # fixtures 真值：crm W35 v12.0 发布事件 fp（复用于"真 fp 拼编造 URL"注入）
 
 
 def _ctx(tmp_path):

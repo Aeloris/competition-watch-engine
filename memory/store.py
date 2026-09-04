@@ -63,8 +63,16 @@ class MemoryStore(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def latest_snapshot(self, competitor_id: str) -> Snapshot | None:
-        """该竞品最近一期快照（无则 None）。period 字典序即时间序（YYYY-Www）。"""
+    def latest_snapshot(
+        self,
+        competitor_id: str,
+        up_to: str | None = None,
+    ) -> Snapshot | None:
+        """该竞品最近一期快照（无则 None）。period 字典序即时间序（YYYY-Www）。
+
+        up_to 语义：只在该期**及之前**的快照里取最新 —— 补跑/重跑历史周期时把 diff 锚钉在当前期，
+        不会被"更晚已跑的周期"（global 最新）污染（否则回填 W34 会用 W35 当上期、漏报 W34 相对 W33 的
+        新增）。缺省 None = 全局最新（原有语义，幂等重跑同周期仍 diff 0）。"""
         raise NotImplementedError
 
 
@@ -116,13 +124,17 @@ class JsonMemoryStore(MemoryStore):
             json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2),
         )
 
-    def latest_snapshot(self, competitor_id: str) -> Snapshot | None:
+    def latest_snapshot(self, competitor_id: str, up_to: str | None = None) -> Snapshot | None:
         d = self._snap_dir / competitor_id
         if not d.exists():
             return None
         files = [f for f in d.glob("*.json") if f.is_file()]
         if not files:
             return None
+        if up_to is not None:  # 补跑/重跑历史期：只看"本期及之前"，别把更晚已跑的快照当上期
+            files = [f for f in files if f.stem <= up_to]
+            if not files:
+                return None
         newest = max(files, key=lambda f: f.stem)  # period 字典序 = 时间序
         data = _read_json_tolerant(newest)
         if data is None:
@@ -191,7 +203,10 @@ class SqliteMemoryStore(MemoryStore):
             ).fetchone()
         if row is None:
             return []
-        return [FactCard.model_validate(item) for item in json.loads(row["payload"])]
+        try:  # 与 Json 后端同口径：单条 payload 损坏（外部手改/半截）按空期读，不炸整条 run
+            return [FactCard.model_validate(item) for item in json.loads(row["payload"])]
+        except Exception:
+            return []
 
     def save_snapshot(self, snapshot: Snapshot) -> None:
         payload = json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False)
@@ -201,15 +216,25 @@ class SqliteMemoryStore(MemoryStore):
                 (snapshot.competitor_id, snapshot.period, payload),
             )
 
-    def latest_snapshot(self, competitor_id: str) -> Snapshot | None:
+    def latest_snapshot(self, competitor_id: str, up_to: str | None = None) -> Snapshot | None:
         with self._session() as conn:
-            row = conn.execute(
-                "SELECT payload FROM snapshots WHERE competitor_id = ? ORDER BY period DESC LIMIT 1",
-                (competitor_id,),
-            ).fetchone()
+            if up_to is not None:  # 补跑/重跑历史期：只取"本期及之前"的最新（见 ABC docstring）
+                row = conn.execute(
+                    "SELECT payload FROM snapshots WHERE competitor_id = ? AND period <= ? "
+                    "ORDER BY period DESC LIMIT 1",
+                    (competitor_id, up_to),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT payload FROM snapshots WHERE competitor_id = ? ORDER BY period DESC LIMIT 1",
+                    (competitor_id,),
+                ).fetchone()
         if row is None:
             return None
-        return Snapshot.model_validate(json.loads(row["payload"]))
+        try:  # 与 Json 后端同口径：单条 payload 损坏按"无快照"冷启动，不炸下游 diff
+            return Snapshot.model_validate(json.loads(row["payload"]))
+        except Exception:
+            return None
 
 
 def get_memory_store(settings: Settings) -> MemoryStore:

@@ -14,9 +14,16 @@ import unicodedata
 
 
 def normalize_title(title: str) -> str:
-    """书写层归一：NFKC 统一全半角 → 转小写 → 只保留字母/数字/汉字（去空白与全部标点）。"""
+    """书写层归一：NFKC 统一全半角 → 转小写 → 只保留字母/数字/汉字/**小数点**。
+
+    保留 '.' 是刻意的（与 dedupe.merge.version_anchor 同款理由，见其 docstring）：v12.0 与 v1.20 是
+    两个不同版本，若把 '.' 当普通标点剥掉，两者都归成 'v120' → 同 fp → 同竞品同维度同期的两个真实
+    发布在快照/diff 层被当成同一事件（build_snapshot 的 set 收敛 + digest dict 覆盖 → 一个被静默吞掉）。
+    含点号只让归一结果**更区分**——两个原本不同的标题永远不会因保留 '.' 而撞在一起；无点号标题的
+    归一结果与旧实现逐字符一致 → 既有 fp 全不动。语义层近义合并不是本函数职责（Phase 4 语义记忆）。
+    """
     s = unicodedata.normalize("NFKC", title).lower()
-    return "".join(ch for ch in s if ch.isalnum())
+    return "".join(ch for ch in s if ch.isalnum() or ch == ".")
 
 
 def event_fingerprint(competitor_id: str, dimension: str, title: str) -> str:

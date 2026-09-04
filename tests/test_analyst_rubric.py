@@ -173,7 +173,7 @@ def test_imminent_release_preview_is_low_but_delivered_ga_is_high():
 
 def test_grade_never_rewrites_dimension_fp_kind():
     src = _ev("更新：看板分享新增链接权限", Dimension.feature)
-    src.fp = "5c60e045b8853e63"
+    src.fp = "0aa08ae4f389825f"
     src.kind = EventKind.change
     items = Analyst().grade([src])
     assert len(items) == 1

@@ -63,10 +63,13 @@ dimension 轴对齐（**维度对齐 ≠ 实体对齐**：feature 线谁先动�
   error + bi 照常 PASS + `run_failed` 告警；演练 B 注入"真 fp 拼编造 URL"的假 writer（复用 P6 手法）→ 门卫 human 拦下、
   落人工收件箱（`UNSOURCED_URL`）+ `human_inbox` 告警，随后 `POST /inbox/resolve` release → 该条目从 held 进发布视图
   （human_released=true）、dismiss → 进 dismissed 审计区——**假事件绝不会以"零收件箱地 completed"蒙混过关**。
-- **全绿 206**（126 基线 + service 23 + eval 15 + panel 7 + compare 16 + 审计回归 3：`tests/test_service_runtime.py`
+- **全绿 215**（126 基线 + service 23 + eval 15 + panel 7 + compare 16 + 审计回归 3：`tests/test_service_runtime.py`
   并发锁 ×2 + `tests/test_dedupe.py` 空标题丢卡 ×1 + 第三轮审计回归 16：`tests/test_audit_round3.py`——采集断档不覆写
   上期快照 ×3、告警投递失败隔离（不翻案成功 run / 失败路径不卡 Task）×2、损坏容忍+原子写 ×4、版本锚 NFKC+
-  纯品牌名不乱并 ×4、period 422 请求期校验 ×1、collect_failures 可见 ×1、面板 entry_id 不内联 JS ×1）；
+  纯品牌名不乱并 ×4、period 422 请求期校验 ×1、collect_failures 可见 ×1、面板 entry_id 不内联 JS ×1 + 第四轮
+  审计回归 9：`tests/test_audit_round4.py`——SQLite 读容忍（损坏 payload 按空读/不抛/自愈）×2、`latest_snapshot(up_to=)`
+  回填重跑历史周期不被更晚快照污染 ×3、版本点号撞指纹（v12.0≠v1.20，快照不吞发布）×3、collection_gap 过真实
+  LangGraph（全源失败 → 真图终态带标记）×1）；
   数据全隔离：测试用 `build_service_context(data_dir=tmp)`，memory/pipeline/service 互不写穿。
 - **诚实边界**：Webhook 仍是占位壳（不真发 HTTP），周报**对外真推送无渠道**——发布闭环止于 published_view（HTTP 查询态
   可复核快照）；Eval 数字是**固定语料回归基线**（gold 7 事件 + 6 对抗场景是"编得动的口径"，不是真实世界命中率；duplicate
@@ -78,7 +81,7 @@ dimension 轴对齐（**维度对齐 ≠ 实体对齐**：feature 线谁先动�
 
 ```bash
 uv sync
-uv run pytest            # 全绿（206）
+uv run pytest            # 全绿（215）
 uv run python -m eval.run   # Eval-Harness 回放评测 → data/eval/eval_report.{json,md}；门禁失败退出码 1
 uv run python -c "from orchestration import demo_two_weeks; demo_two_weeks()"   # 流水线回放：trace + threat_radar + gate
 uv run uvicorn app.main:app --port 8000   # http://127.0.0.1:8000/health · http://127.0.0.1:8000/panel

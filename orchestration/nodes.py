@@ -122,7 +122,9 @@ def dedupe_diff_node(state: dict, ctx: NodeContext) -> dict:
 
     events, dsum = merge_to_events(target, period=period, aliases=ctx.aliases)
 
-    prev = ctx.store.latest_snapshot(comp)
+    # diff 锚钉"本期及之前"的最新快照（up_to=period）：正常周更 = 上期；补跑/重跑历史周期时不被
+    # 更晚已跑的周期污染（否则回填 W34 会用 W35 当上期，把 W34 相对 W33 的新增漏报成 unchanged）。
+    prev = ctx.store.latest_snapshot(comp, up_to=period)
     prev_snap = prev if prev is not None else Snapshot(period="", competitor_id=comp)
     cs: ChangeSet = diff_event_sets(prev_snap, events)   # 不传 removed_fps = 绝不自动推断消失
 

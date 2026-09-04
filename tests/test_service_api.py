@@ -21,7 +21,7 @@ from orchestration import graph as graph_mod
 from reviewer import UNSOURCED_URL
 from service import build_service_context
 
-V12_FP = "5c60e045b8853e63"  # crm W35 真 fp（用于"真 fp 拼编造 URL"注入）
+V12_FP = "0aa08ae4f389825f"  # crm W35 真 fp（用于"真 fp 拼编造 URL"注入）
 
 
 def _item(title: str = "T", *, fp: str = "fp-1", urls=("https://a.example/x",)) -> dict:
