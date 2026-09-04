@@ -20,11 +20,14 @@ _PERIOD_RE = re.compile(r"^(\d{4})-W(\d{2})$")
 
 
 def period_start(period: str) -> date:
-    """周期 "YYYY-Www" 的周一起日（ISO 周）。非法字符串 → ValueError（fail fast）。"""
+    """周期 "YYYY-Www" 的周一起日（ISO 周）。非法字符串/周号越界 → ValueError（fail fast）。"""
     m = _PERIOD_RE.match(period)
     if not m:
         raise ValueError(f"period 必须是 'YYYY-Www'（ISO 周），收到: {period!r}")
-    return date.fromisocalendar(int(m.group(1)), int(m.group(2)), 1)
+    try:
+        return date.fromisocalendar(int(m.group(1)), int(m.group(2)), 1)
+    except ValueError:  # 如 2026-W99：正则格式对但 ISO 周号不存在 → 说人话，别让内部异常漏给客户端
+        raise ValueError(f"period 周号越界（不存在该 ISO 周）：{period!r}") from None
 
 
 def period_end_exclusive(period: str) -> date:

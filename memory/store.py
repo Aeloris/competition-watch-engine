@@ -8,7 +8,9 @@
 """
 from __future__ import annotations
 
+import itertools
 import json
+import os
 import sqlite3
 from abc import ABC, abstractmethod
 from contextlib import contextmanager
@@ -16,6 +18,28 @@ from pathlib import Path
 
 from config.settings import Settings
 from memory.schemas import FactCard, Snapshot
+
+# 唯一 tmp 名（pid + 自增序号）→ os.replace 原子落盘：崩溃/被杀也只留 .tmp 半成品，
+# 目标文件要么旧要么新，绝无中间态。固定 ".tmp" 会让上次异常残留被本调用吞掉（见 service/store 同款）。
+_tmp_seq = itertools.count()
+
+
+def _atomic_write_text(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.{next(_tmp_seq)}.tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def _read_json_tolerant(path: Path):
+    """读整份 JSON；缺失返回 None，损坏（半截/非法 JSON）返回 None —— 调用方按"文件不存在"降级，
+    不把单个坏文件炸成全竞品后续 run（写已是原子，坏文件只可能来自外部手改）。"""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (ValueError, OSError):
+        return None
 
 
 class MemoryStore(ABC):
@@ -65,30 +89,31 @@ class JsonMemoryStore(MemoryStore):
     def save_fact_cards(self, competitor_id: str, period: str, cards: list[FactCard]) -> None:
         ordered = sorted(cards, key=lambda c: (c.published_at.isoformat(), c.source_url))
         p = self._fc_path(competitor_id, period)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
+        _atomic_write_text(
+            p,
             json.dumps(
                 [c.model_dump(mode="json") for c in ordered],
                 ensure_ascii=False,
                 indent=2,
             ),
-            encoding="utf-8",
         )
 
     def list_fact_cards(self, competitor_id: str, period: str) -> list[FactCard]:
         p = self._fc_path(competitor_id, period)
-        if not p.exists():
+        data = _read_json_tolerant(p)
+        if data is None:
+            return []  # 缺失/损坏都按"该期无存档"读，不抛（防坏文件炸调用方）
+        try:
+            return [FactCard.model_validate(item) for item in data]
+        except Exception:
             return []
-        data = json.loads(p.read_text(encoding="utf-8"))
-        return [FactCard.model_validate(item) for item in data]
 
     # ---- Snapshots ----
     def save_snapshot(self, snapshot: Snapshot) -> None:
         p = self._snap_path(snapshot.competitor_id, snapshot.period)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(
+        _atomic_write_text(
+            p,
             json.dumps(snapshot.model_dump(mode="json"), ensure_ascii=False, indent=2),
-            encoding="utf-8",
         )
 
     def latest_snapshot(self, competitor_id: str) -> Snapshot | None:
@@ -99,7 +124,13 @@ class JsonMemoryStore(MemoryStore):
         if not files:
             return None
         newest = max(files, key=lambda f: f.stem)  # period 字典序 = 时间序
-        return Snapshot.model_validate(json.loads(newest.read_text(encoding="utf-8")))
+        data = _read_json_tolerant(newest)
+        if data is None:
+            return None  # 最新快照损坏 → 按"无快照"冷启动（下期重写自愈），不把坏文件炸给 diff
+        try:
+            return Snapshot.model_validate(data)
+        except Exception:
+            return None
 
 
 class SqliteMemoryStore(MemoryStore):

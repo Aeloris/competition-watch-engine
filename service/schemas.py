@@ -45,6 +45,7 @@ class RunMeta(BaseModel):
     gate_problems: int = 0                     # 末次门卫判定的问题条数（= 拦 X 的口径）
     gate_trace_count: int = 0                  # 本次 run 内门卫判定次数（PASS 也算一次）
     inbox_count: int = 0                       # 转人工收件箱条数
+    collect_failures: int = 0                  # 采集期失败信源数（部分失败可见；全败走 failed 不在此列）
     human_inbox: list[dict] = Field(default_factory=list)  # P6 落箱条目（Phase 8 面板读）
     error: str | None = None
     started_at: str | None = None

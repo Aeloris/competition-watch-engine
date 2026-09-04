@@ -18,9 +18,10 @@ import json
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from app.routers.deps import get_service_ctx
+from orchestration.planner import period_start
 from service.compare import CompareNotPossible, compare_view
 from service.context import ServiceContext
 from service.publish import EntryNotFound, published_view
@@ -33,6 +34,16 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 class TaskRequest(BaseModel):
     period: str | None = Field(None, description='周期 "YYYY-Www"；缺省 = 最近已结束 ISO 周')
     competitor_id: str | None = Field(None, description="只跑单竞品（调试用）；缺省 = 全部可用竞品")
+
+    @field_validator("period")
+    @classmethod
+    def _period_must_be_valid_iso_week(cls, v: str | None) -> str | None:
+        # 请求期就校验：格式对但周号越界（如 2026-W99）会让每个 run 在 period_start 里 ValueError
+        # → 全 run failed + 201"注定失败"的任务。这里提前 422（orchestration.planner.period_start
+        # 的 ValueError 被 pydantic 转 422），客户端拿到的是格式错误而非后端内部异常。
+        if v is not None:
+            period_start(v)
+        return v
 
 
 @router.post("", status_code=201)

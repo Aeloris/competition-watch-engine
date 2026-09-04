@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,7 +43,9 @@ def version_anchor(title: str) -> str | None:
     把非数字全剥掉，两者都变 '120' → 撞锚误并成同一发布事件。锚只做同竞品同维度簇内相等比较，
     含点不影响匹配，只消除歧义。
     """
-    m = _VERSION_RE.search(title)
+    # 先 NFKC 再搜：全角 'Ｖ１２．０' 归一成 'v12.0' 才能被 [vV]?\d+(\.\d+)+ 命中——否则全角写法
+    # 在本簇拿不到锚、与 ASCII 写法的兄弟卡（有锚）永不合并，一个真实发布被拆成两条事件。
+    m = _VERSION_RE.search(unicodedata.normalize("NFKC", title))
     if not m:
         return None
     return m.group(0).lower().lstrip("v")
@@ -59,11 +62,15 @@ def _strip_aliases(norm: str, aliases: list[str]) -> str:
 
 
 def _near_verbatim(a: str, b: str, aliases: list[str]) -> bool:
-    """近原文重复：别名剔除后标题相同，或一个几乎完整包含另一个（长短比 ≥ 0.9）。"""
+    """近原文重复：别名剔除后标题相同，或一个几乎完整包含另一个（长短比 ≥ 0.9）。
+
+    纯品牌名标题（别名剔除后空）没有可判别的正文：一律不并（两篇标题都只是"Alpha CRM"的
+    文章未必是同一事件），仅在标题**完全相同**时算重复——否则会把无关报道并成一条假事件。
+    """
     x = _strip_aliases(a, aliases)
     y = _strip_aliases(b, aliases)
     if not x and not y:
-        return True
+        return normalize_title(a) == normalize_title(b)
     if x == y:
         return True
     short, long_ = (x, y) if len(x) <= len(y) else (y, x)

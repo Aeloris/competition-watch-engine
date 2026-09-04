@@ -115,10 +115,15 @@ def _entry_html(e: dict) -> str:
     color = _CODE_COLOR.get(e["code"], "#64748b")
     html_id = f'id="entry-{escape(e["entry_id"])}"'
     resolved = e["status"] == "resolved"
-    controls = (f'<button onclick="resolve(\'{e["entry_id"]}\',\'release\')">放行</button>'
-                f'<button onclick="resolve(\'{e["entry_id"]}\',\'dismiss\')">驳回</button>'
-                f'<button onclick="resolve(\'{e["entry_id"]}\',\'note\')">备注</button>'
-                ) if not resolved else ""
+
+    def _btn(label: str, action: str) -> str:
+        # entry_id 只进 data-eid 属性（quote=True 全转义），JS 从 this.dataset.eid 读——
+        # 不把 id 拼进 JS 字符串字面量，杜绝单引号/斜杠注入（uuid-hex 今日无患，防御纵深）
+        return (f'<button data-eid="{escape(e["entry_id"], quote=True)}" '
+                f'onclick="resolve(this.dataset.eid,\'{action}\')">{label}</button>')
+
+    controls = (_btn("放行", "release") + _btn("驳回", "dismiss") + _btn("备注", "note")) \
+        if not resolved else ""
     status_tag = ('<span class="tag ok">resolved</span>' if resolved
                   else '<span class="tag warn">pending</span>')
     return (f'<div class="entry" {html_id}>'
@@ -144,7 +149,7 @@ def panel_overview(ctx: ServiceContext = Depends(get_service_ctx)) -> str:
         queue_html = '<div class="ok">✅ 待办已清空（无未处理收件箱条目）</div>'
 
     task_rows = "".join(
-        f'<tr><td><a href="/panel/task/{m.task_id}">{m.task_id}</a></td>'
+        f'<tr><td><a href="/panel/task/{escape(m.task_id)}">{escape(m.task_id)}</a></td>'
         f'<td>{m.period}</td><td>{m.status.value}</td>'
         f'<td>{m.summary.get("done", 0)}/{m.summary.get("runs", 0)} done</td>'
         f'<td>{m.summary.get("human", 0)}</td><td>{m.summary.get("inbox_total", 0)}</td></tr>'
@@ -188,10 +193,10 @@ def panel_task(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)) -> 
             continue
         entries = "".join(_entry_html(e) for e in list_inbox_entries(ctx.task_store, status="all")
                           if e["run_id"] == run.run_id) or '<div class="dim">该 run 无收件箱条目</div>'
-        run_blocks += (f'<h3>{run.competitor_id} {run.period} · run={run.run_id} · '
-                       f'verdict=<span class="{"bad" if run.verdict=="human" else "ok"}">{run.verdict}</span> · '
+        run_blocks += (f'<h3>{escape(run.competitor_id)} {run.period} · run={run.run_id} · '
+                       f'verdict=<span class="{"bad" if run.verdict=="human" else "ok"}">{escape(run.verdict or "")}</span> · '
                        f'trace={run.trace.get("collected")}→{run.trace.get("merged")}→{run.trace.get("diff")} · '
-                       f'radar={run.threat_radar}</h3>{entries}')
+                       f'radar={run.threat_radar} · failures={run.collect_failures}</h3>{entries}')
 
     # 发布视图
     try:
@@ -224,7 +229,7 @@ def panel_task(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)) -> 
     summary_meta = meta.summary or {}
     compare_html = _compare_section(task_id, ctx)
     body = f"""
-<h1>Task <span class="code">{task_id}</span>
+<h1>Task <span class="code">{escape(task_id)}</span>
 <a style="float:right" href="/panel">← 返回总览</a></h1>
 <p>period <span class="code">{meta.period}</span> · status <span class="tag">{meta.status.value}</span> ·
 runs={summary_meta.get("runs")} done={summary_meta.get("done")} human={summary_meta.get("human")} ·
@@ -234,4 +239,4 @@ inbox_total={summary_meta.get("inbox_total")}</p>
 {summary}
 {compare_html}
 """
-    return _HEAD.format(title=f"Task {task_id}") + body + _FOOT
+    return _HEAD.format(title=f"Task {escape(task_id)}") + body + _FOOT

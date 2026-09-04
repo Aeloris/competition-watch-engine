@@ -126,8 +126,15 @@ def dedupe_diff_node(state: dict, ctx: NodeContext) -> dict:
     prev_snap = prev if prev is not None else Snapshot(period="", competitor_id=comp)
     cs: ChangeSet = diff_event_sets(prev_snap, events)   # 不传 removed_fps = 绝不自动推断消失
 
-    # 记忆写档：本期固化（fps + digests），下期 diff 的比对底；同 (竞品,期) 幂等覆盖
-    ctx.store.save_snapshot(build_snapshot(events, comp, period))
+    # 采集断档守卫：全部信源失败且零卡 = 本轮"没看到世界"，不是"世界没变化"。此时**不覆盖**
+    # 上期快照**——否则把 diff 锚冲成空，下期再把旧闻当"新增"上报（假情报入口）。空档标记交
+    # runner 记 failed，让"采集坏了"显形，而不是用空周报冒充干净 PASS。
+    failures = (state.get("collect_summary") or {}).get("failures") or []
+    collection_gap = bool(failures) and not target
+    if not collection_gap:
+        # 记忆写档：本期固化（fps + digests），下期 diff 的比对底；同 (竞品,期) 幂等覆盖
+        # （正常空期也照写空快照 = "本周确实无事发生"与断档区分开）
+        ctx.store.save_snapshot(build_snapshot(events, comp, period))
 
     return {
         "cards": [c.model_dump(mode="json") for c in target],  # state.cards 收敛为"目标期卡"
@@ -136,6 +143,7 @@ def dedupe_diff_node(state: dict, ctx: NodeContext) -> dict:
         "diff_summary": cs.summary().model_dump(),
         "removed_fps": list(cs.removed_fps),
         "unchanged_fps": list(cs.unchanged_fps),
+        "collection_gap": collection_gap,
         "trace": {
             "collected": len(target),   # N：本期喂给去重的卡
             "merged": dsum.events_out,  # M：去重剩多少事件

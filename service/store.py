@@ -81,7 +81,12 @@ class TaskStore:
         p = self._task_path(task_id)
         if not p.exists():
             return None
-        return TaskMeta.model_validate(_read_json(p, {}))
+        try:
+            return TaskMeta.model_validate(_read_json(p, {}))
+        except Exception:
+            # 损坏/半截任务文件按"不存在"读（与 list_tasks 跳过损坏文件同口径）：单条坏文件
+            # 不应把 GET /tasks/{id} /published /compare、面板任务页打成 500。
+            return None
 
     def _save(self, meta: TaskMeta) -> None:
         _atomic_write_json(self._task_path(meta.task_id), meta.as_dict())
@@ -182,7 +187,15 @@ def alerts_path(settings) -> Path:
 
 
 def read_alerts(settings) -> list[dict]:
-    return _read_json(alerts_path(settings), [])
+    p = alerts_path(settings)
+    if not p.exists():
+        return []
+    try:
+        return _read_json(p, [])
+    except (ValueError, OSError):
+        # 台账损坏（外部手改/半截）按"空台账"读：GET /alerts 不 500；下次 append_alert
+        # 读到损坏仍由本函数兜底为空后整体重写 → 自愈。
+        return []
 
 
 def append_alert(settings, alert: dict) -> None:

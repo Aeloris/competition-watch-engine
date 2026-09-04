@@ -13,7 +13,8 @@
 > 增量「跨竞品横向对比」（README2 路线图之后，自主增量）：在 Phase 8 发布视图之上加**横着看**——
 > `compare/` 纯函数（已放行条目按 dimension 轴对齐，**维度对齐 ≠ 实体对齐**）+
 > `service/compare.py`（compare_view）+ `GET /tasks/{id}/compare`（<2 家已放行 422）+ 面板横向对比段。
-> **187 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16：`tests/test_compare_{builder,api}.py`）。
+> **206 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 + 审计回归 19：并发锁/空标题丢卡 ×3 +
+> `tests/test_audit_round3.py` ×16——断档守卫/告警隔离/损坏容忍/NFKC 版本锚/period 422/collect_failures/面板转义）。
 > 编排与门卫内部口径见 [`docs/orchestrator.md`](orchestrator.md) / [`docs/reviewer.md`](reviewer.md)，
 > 评测口径见 [`docs/eval.md`](eval.md)，横向对比口径见 [`docs/compare.md`](compare.md)。
 
@@ -222,7 +223,7 @@ bi **5→4→4**；威胁雷达 crm {high1, med1, low1}、bi {high1, med1, low2}
 
 ```bash
 uv sync
-uv run pytest                       # 全绿（Phase 8 + 增量 = 187：基线 149 + eval 15 + panel 7 + compare 16）
+uv run pytest                       # 全绿（当前 = 206：基线 149 + eval 15 + panel 7 + compare 16 + 审计回归 19）
 uv run pytest tests/test_service_runtime.py tests/test_service_api.py tests/test_panel_api.py tests/test_compare_api.py -v
 uv run uvicorn app.main:app --port 8000   # 服务化 HTTP（0.9.0，含 /panel）
 # 跑一次"本期巡检"（单竞品调试 / 缺省 = 全部竞品 + 最近已结束 ISO 周）：
@@ -262,3 +263,7 @@ app/routers inbox resolve + tasks/{id}/published + panel；main 0.7.0→0.8.0；
 2026-09-04 更新（增量横向对比：compare/ 纯函数 + service/compare.py（compare_view）+ GET /tasks/{id}/compare
 + 面板横向对比段；main 0.8.0→0.9.0；HTTP 表/标题/§6 补增量小节、§8 决策补第 7 条、§9 局限补"不做实体对齐"；
 165→180 测试（compare 15：builder 9 + api 6）；横向对比口径见 docs/compare.md）。
+2026-09-04 更新（全面审计三轮收尾：service/store 并发锁 update_run/finalize + alerts/get_task 损坏容忍读、
+runner `_alert` 告警投递失败隔离（不翻案 done / 失败路径不卡 Task）、采集断档 guard（不覆写上期快照 + 记 failed）、
+collect_failures 部分失败上报、POST /tasks period 越界 422 预校验、panel entry_id 改 data-eid 不内联 JS；
+全绿 → 206（本轮新增回归 16：tests/test_audit_round3.py）。计数 = 仓库 pytest 实测，与 README 同源）。

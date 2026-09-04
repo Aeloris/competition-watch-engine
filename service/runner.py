@@ -121,9 +121,27 @@ class ServiceRunner:
                 fetched_at=fetched_at,
                 persist=True,
             )
-            run.status = RunStatus.done
-            run = self._fill_run_meta(run, final)
-            self._alert_for(run, final)
+            if final.get("collection_gap"):
+                # 全源失败 + 零卡 = 本轮"没看到世界"，不是"世界没变化"：上游已跳过覆盖上期快照
+                # （防把 diff 锚冲空、下期把旧闻再当新增）。这里把 run 记 failed——别让空周报冒充
+                # 干净 PASS（采集坏了 ≠ 无事发生），错误信息把"为什么没数据"留给审计。
+                failures = (final.get("collect_summary") or {}).get("failures") or []
+                run.status = RunStatus.failed
+                run.error = ("本期采集全源失败（零卡）——未观测到数据，不产出空周报；"
+                             "上期快照已保留。failures=" + "; ".join(failures))
+                run.finished_at = utc_now_iso()
+                self._alert(
+                    "run_failed",
+                    summary=f"竞品 {competitor_id} {period} 采集失败（零数据，无周报）",
+                    competitor_id=competitor_id,
+                    period=period,
+                    run_id=run_id,
+                    payload={"error": run.error, "failures": failures},
+                )
+            else:
+                run.status = RunStatus.done
+                run = self._fill_run_meta(run, final)
+                self._alert_for(run, final)
         except Exception as exc:  # run 级失败隔离：记 failed + error，不中断同一 Task 的其它竞品
             run.status = RunStatus.failed
             run.error = f"{type(exc).__name__}: {exc}"
@@ -153,6 +171,9 @@ class ServiceRunner:
         run.inbox_count = len(inbox)
         draft = final.get("draft") or {}
         run.threat_radar = dict(draft.get("threat_radar") or {})
+        # 采集期有信源失败但仍有数据产出（部分失败）：如实记录失败源数，别把"缺数据"当"没问题"
+        collect = final.get("collect_summary") or {}
+        run.collect_failures = len(collect.get("failures") or [])
         run.finished_at = utc_now_iso()
         return run
 
@@ -199,8 +220,8 @@ class ServiceRunner:
         )
         try:
             self.notifier.deliver(event)
-        except NotImplementedError as exc:  # Webhook 壳：不真发、不因告警拖垮巡检
-            print(f"[alert-skip] {event_type}（{exc}）")
+        except Exception as exc:  # 告警尽力而为：占位壳(NotImplemented)/台账 IO 等任何投递失败
+            print(f"[alert-skip] {event_type}（{type(exc).__name__}: {exc}）")  # 都不拖垮巡检 / 翻案 run
 
     # ------------------------------------------------------------ 收口
     def _finalize(self, task_id: str) -> TaskMeta:

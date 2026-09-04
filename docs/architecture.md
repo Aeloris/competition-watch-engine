@@ -166,8 +166,10 @@ flowchart LR
 > 终态不可覆盖、note = 只备注不销案；by/note/resolved_at 审计落 run.human_inbox）；`published_view` 把 draft 按
 > resolution 过滤成 published / held / dismissed（PASS 全自动发布、未放行/带 note 挂 held、dismissed 进审计剔除区）。
 > `app/routers/panel.py` 零构建 HTML 面板（收件箱 放行/驳回/备注 按钮 + 发布视图 + 告警可视化，原生 JS 调同款
-> JSON API）。main 0.9.0；全 mock 下 **190 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 +
-> 审计回归 3：service_runtime 并发锁 ×2、dedupe 空标题丢卡 ×1）。
+> JSON API）。main 0.9.0；全 mock 下 **206 测试全绿**（基线 149 + eval 15 + panel 7 + 横向对比 16 +
+> 审计回归 3：service_runtime 并发锁 ×2、dedupe 空标题丢卡 ×1 + 第三轮审计回归 16：tests/test_audit_round3.py——
+> 采集断档不覆写上期快照 ×3、告警投递失败隔离 ×2、损坏容忍+原子写 ×4、版本锚 NFKC+纯品牌名不乱并 ×4、
+> period 422 请求期校验 ×1、collect_failures 可见 ×1、面板 entry_id 不内联 JS ×1）。
 > 增量交付口径 = **跨竞品横向对比**：把"单竞品各交各的周报"升级为"同 Task 里横着看"。`compare/`（model+builder）
 > 吃发布视图的**已放行**条目，产出 competitor 雷达列头 + dimension 行 + derived（全员动作维度 / 单边动作维度 /
 > 率先维度计数）。确定性：竞品按 id 规范化、行按 Dimension 声明序、格内 (first_seen,fp,title) 稳定排序、雷达一律
@@ -251,7 +253,7 @@ competition-watch-engine/
 
 ```bash
 uv sync                      # 安装依赖（含 dev: pytest/httpx + langgraph + fastapi + uvicorn + apscheduler）
-uv run pytest                # 全绿（当前 = 190）
+uv run pytest                # 全绿（当前 = 206）
 uv run uvicorn app.main:app --port 8000   # 服务化 HTTP：/health + /tasks + /inbox + /alerts + /panel（0.9.0）
 # 数据层验证：见 docs/schema.md §6（语料切期 / 双后端 round-trip）
 # 采集层验证：见 docs/collectors.md §5（并发采集 / 失败隔离手工跑法）
@@ -275,3 +277,6 @@ _更新日志_：2026-09-03 建（Phase 0 交付）；2026-09-03 更新（Phase 
 2026-09-04 更新（Phase 7：服务层行 ✅、任务/报告/告警 API 与 APScheduler 行 ✅、Reporter/Alert 行拆出（Alert 归 service/notifier）、目录骨架加 service 与 app/routers 模块、docs/service.md、pytest 123→144、交付口径补 Phase 7）。
 2026-09-04 更新（Phase 8：Eval 行 ✅（reporter/publisher 拆成占位）、人工放行闭环/发布视图/简单面板行 ✅、FastAPI version 0.7.0→0.8.0、目录骨架 eval/ 转实 + service/publish.py + app/routers/panel.py + docs/eval.md、pytest 144→165、交付口径补 Phase 8、沿革/不宣称段落补 P8 边界）。
 2026-09-04 更新（增量横向对比：跨竞品横向对比行 ✅、FastAPI version 0.8.0→0.9.0、目录骨架加 compare/ 包 + service/compare.py + app/routers compare 路由/面板段 + docs/compare.md、pytest 165→180、沿革/不宣称段落补"横向对比≠实体等价"边界）。
+2026-09-04 更新（全面审计收尾三轮：TaskStore/告警台账损坏容忍与并发锁、runner 告警投递失败隔离、采集断档不覆写
+上期快照 guard + 记 failed、collect_failures 上报、POST /tasks period 越界 422 预校验、版本锚 NFKC/纯品牌名不乱并、
+panel entry_id 改 data-eid 不内联 JS；pytest 全绿 → 206，本轮新增回归 16：tests/test_audit_round3.py）。
