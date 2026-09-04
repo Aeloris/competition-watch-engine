@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 
 from app.routers.deps import get_service_ctx
+from service.compare import CompareNotPossible, compare_view
 from service.context import ServiceContext
 from service.publish import EntryNotFound, list_inbox_entries, published_view
 
@@ -67,6 +68,47 @@ def _resolution_cell(resolution) -> str:
     label = _ACTION_LABEL.get(resolution.get("action"), resolution.get("action"))
     return (f'<span class="code">{label}</span> <span class="dim">by {escape(resolution.get("by", ""))} · '
             f'{escape(str(resolution.get("note", "")))} · {escape(resolution.get("resolved_at", ""))}</span>')
+
+
+def _compare_section(task_id: str, ctx: ServiceContext) -> str:
+    """跨竞品横向对比段（增量）：维度行 × 竞品列，★ = 率先(含独占)动作方；<2 家已放行则明说无可比。"""
+    try:
+        rep = compare_view(ctx.task_store, ctx.settings, task_id)
+    except CompareNotPossible:
+        return ('<h2>跨竞品横向对比 <span class="dim">(维度对齐≠实体对齐)</span></h2>'
+                '<div class="dim">无可比：需 ≥2 家有已放行条目的竞品（先审后发后才见真章）。</div>')
+
+    comps = rep["competitors"]
+    head = "".join(
+        f'<th>{escape(c["competitor_id"])}'
+        f'<div class="dim">radar {c["radar"]["high"]}/{c["radar"]["medium"]}/{c["radar"]["low"]} · '
+        f'{c["headline_count"]}条 · {"+".join(c["dims_moved"]) or "-"}</div></th>'
+        for c in comps
+    )
+    row_html = ""
+    for r in rep["rows"]:
+        cell_by = {c["competitor_id"]: c for c in r["cells"]}
+        cells = ""
+        for c in comps:
+            cid = c["competitor_id"]
+            if cid not in cell_by:
+                cells += '<td class="dim">—</td>'
+                continue
+            cell = cell_by[cid]
+            star = ' <span class="tag ok">★ 先行</span>' if cid in r["first_mover"] else ""
+            cells += (f'<td>{cell["item_count"]}条{star}'
+                      f'<div class="dim">high {cell["high_count"]} · 最早 {cell["earliest"] or "-"} · '
+                      f'max {cell["max_severity"] or "-"}</div></td>')
+        row_html += f'<tr><td>{escape(r["dimension"])}</td>{cells}</tr>'
+
+    both = "、".join(rep["both_moved_dims"]) or "无"
+    single = " · ".join(f'{escape(s["dimension"])}←{escape(s["mover"])}' for s in rep["single_moved_dims"]) or "无"
+    counts = " · ".join(f'{escape(k)} {v} 个' for k, v in rep["first_move_counts"].items()) or "0"
+    return f"""
+<h2>跨竞品横向对比 <span class="dim">(维度对齐≠实体对齐 · 只含已放行条目)</span></h2>
+<table><tr><th>维度</th>{head}</tr>{row_html}</table>
+<p class="dim">全员动作维度：{both} ｜ 单边动作维度：{single} ｜ 率先(含独占)维度数：{counts}（★=该维度先行方）</p>
+"""
 
 
 def _entry_html(e: dict) -> str:
@@ -179,6 +221,7 @@ def panel_task(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)) -> 
 """
 
     summary_meta = meta.summary or {}
+    compare_html = _compare_section(task_id, ctx)
     body = f"""
 <h1>Task <span class="code">{task_id}</span>
 <a style="float:right" href="/panel">← 返回总览</a></h1>
@@ -188,5 +231,6 @@ inbox_total={summary_meta.get("inbox_total")}</p>
 <div class="dim">处理人：<input type="text" id="by" value="面板操作员" size="14"></div>
 {run_blocks or '<div class="dim">该 task 无转人工的 run（全 PASS 或全部失败）</div>'}
 {summary}
+{compare_html}
 """
     return _HEAD.format(title=f"Task {task_id}") + body + _FOOT

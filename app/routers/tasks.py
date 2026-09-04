@@ -8,6 +8,9 @@
   从 data/pipeline/{run_id}.json 合并回来（TaskStore 只存元数据索引，全量 state 在 pipeline 层）。
 - GET /tasks/{id}/published（Phase 8）：发布视图——把 draft 按人工 resolution 过滤成
   published / held / dismissed（先审后发闭环的可复核快照；逻辑在 service/publish）。
+- GET /tasks/{id}/compare（增量横向对比）：跨竞品横向对比——消费发布视图，把 ≥2 家有已放行
+  条目的 run 按 dimension 轴对齐（维度对齐 ≠ 实体对齐，口径见 docs/compare.md）；
+  不足两家 422 + reason（单竞品/全挂起无可比）。
 """
 from __future__ import annotations
 
@@ -18,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from app.routers.deps import get_service_ctx
+from service.compare import CompareNotPossible, compare_view
 from service.context import ServiceContext
 from service.publish import EntryNotFound, published_view
 from service.runner import available_competitors
@@ -112,3 +116,14 @@ def get_task_published(task_id: str, ctx: ServiceContext = Depends(get_service_c
         return published_view(ctx.task_store, ctx.settings, task_id)
     except EntryNotFound:
         raise HTTPException(status_code=404, detail=f"task {task_id} 不存在")
+
+
+@router.get("/{task_id}/compare")
+def get_task_compare(task_id: str, ctx: ServiceContext = Depends(get_service_ctx)) -> dict:
+    """跨竞品横向对比（增量）：≥2 家有已放行条目才可比（422+原因），task 不存在 404。"""
+    try:
+        return compare_view(ctx.task_store, ctx.settings, task_id)
+    except EntryNotFound:
+        raise HTTPException(status_code=404, detail=f"task {task_id} 不存在")
+    except CompareNotPossible as e:
+        raise HTTPException(status_code=422, detail=e.reason)
